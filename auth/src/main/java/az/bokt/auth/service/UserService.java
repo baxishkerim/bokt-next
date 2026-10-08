@@ -1,10 +1,12 @@
 package az.bokt.auth.service;
 
+import az.bokt.auth.domain.Permission;
 import az.bokt.auth.domain.Role;
 import az.bokt.auth.domain.User;
 import az.bokt.auth.dto.CreateUserRequest;
 import az.bokt.auth.repo.RoleRepository;
 import az.bokt.auth.repo.UserRepository;
+import az.bokt.auth.security.CurrentUser;
 import az.bokt.common.domain.EntityStatus;
 import az.bokt.common.domain.Gender;
 import az.bokt.common.error.BusinessException;
@@ -43,13 +45,44 @@ public class UserService {
 
     @Transactional
     public User create(CreateUserRequest req) {
-        Long tenantId = TenantContext.requireTenantId();
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            // Супер-админ платформы не привязан к организации и не создаёт сотрудников:
+            // он заводит только директора через регистрацию NBCO.
+            throw new BusinessException(ErrorCode.ACCESS_DENIED,
+                    "Создавать сотрудников может только пользователь организации (директор/модератор), а не супер-админ платформы");
+        }
 
         if (userRepo.existsByTenantIdAndUsername(tenantId, req.username())) {
             throw new BusinessException(ErrorCode.CONFLICT, "Пользователь с таким username уже существует");
         }
 
+        User creator = userRepo.findById(CurrentUser.requireUserId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHENTICATED));
+
         Set<Role> roles = resolveRoles(req.roleIds());
+
+        // Защита от эскалации: чувствительные (административные) права нельзя выдать,
+        // если их нет у самого создающего. Операционные права (работа с кредитами/клиентами)
+        // назначаются свободно — иначе директор не смог бы создать модератора, а модератор оператора.
+        if (!creator.isSuperAdmin()) {
+            Set<Permission> creatorPerms = creator.effectivePermissions();
+            Set<Permission> elevated = java.util.EnumSet.of(
+                    Permission.TENANT_MANAGE, Permission.ROLE_MANAGE,
+                    Permission.USER_MANAGE, Permission.CARD_MANAGE);
+            for (Role r : roles) {
+                for (Permission p : r.getPermissions()) {
+                    if (elevated.contains(p) && !creatorPerms.contains(p)) {
+                        throw new BusinessException(ErrorCode.ACCESS_DENIED,
+                                "Нельзя выдать административное право, которого нет у вас: " + p.name());
+                    }
+                }
+            }
+        }
+
+        // Филиал: если у создающего есть филиал (модератор) — новый пользователь в тот же филиал;
+        // если филиала нет (директор) — берётся из запроса (директор выбирает филиал модератору).
+        Long branchId = creator.getBranchId() != null ? creator.getBranchId() : req.branchId();
 
         String rawPassword = HashUtil.randomToken(9);   // временный пароль
         String otp = HashUtil.numericOtp(6);            // OTP для первого входа отправляется вместе
@@ -63,7 +96,7 @@ public class UserService {
         user.setBirthDate(req.birthDate());
         user.setGender(req.gender() == null ? Gender.UNKNOWN : req.gender());
         user.setPhone(req.phone());
-        user.setBranchId(req.branchId());
+        user.setBranchId(branchId);
         user.setStatus(EntityStatus.ACTIVE);
         user.setPasswordExpiry(LocalDate.now().plusMonths(3));
         user.setRoles(roles);

@@ -17,6 +17,8 @@ import az.bokt.tenant.domain.OrgBin;
 import az.bokt.tenant.domain.OrgCard;
 import az.bokt.tenant.domain.OrgCurrency;
 import az.bokt.tenant.domain.Organisation;
+import az.bokt.common.tenant.TenantContext;
+import az.bokt.tenant.dto.CreateBranchWithModeratorRequest;
 import az.bokt.tenant.dto.RegisterOrganisationRequest;
 import az.bokt.tenant.repo.BranchRepository;
 import az.bokt.tenant.repo.CurrencyRepository;
@@ -148,23 +150,20 @@ public class OrganisationService {
         return org;
     }
 
-    /** Создаёт роли director/branch_manager/operator/moderator, возвращает роль director. */
+    /** Создаёт роли director/moderator/operator, возвращает роль director. */
     private Role seedDefaultRoles(Long tenantId) {
-        Role director = role(tenantId, "director", "Директор: управление сотрудниками, ролями, картами, отчёты", Set.of(
-                Permission.USER_MANAGE, Permission.ROLE_MANAGE, Permission.CARD_MANAGE,
-                Permission.CLIENT_MANAGE, Permission.CREDIT_VIEW, Permission.CREDIT_ARCHIVE_VIEW,
-                Permission.CREDIT_BY_PAN, Permission.REVERSAL_EXECUTE, Permission.FILE_IMPORT,
-                Permission.REPORT_VIEW));
+        Role director = role(tenantId, "director", "Директор: вся организация, создание модераторов, карты, отчёты", Set.of(
+                Permission.USER_MANAGE, Permission.CARD_MANAGE, Permission.CLIENT_MANAGE,
+                Permission.CREDIT_VIEW, Permission.CREDIT_ARCHIVE_VIEW, Permission.CREDIT_BY_PAN,
+                Permission.REVERSAL_EXECUTE, Permission.FILE_IMPORT, Permission.REPORT_VIEW));
 
-        role(tenantId, "branch_manager", "Менеджер филиала: подтверждение, клиенты, отчёты", Set.of(
-                Permission.CREDIT_VIEW, Permission.CREDIT_APPROVE, Permission.CLIENT_MANAGE,
-                Permission.REPORT_VIEW, Permission.CARD_LIST));
+        // Модератор = начальник филиала: подтверждает кредиты и создаёт операторов своего филиала
+        role(tenantId, "moderator", "Модератор (филиал): подтверждение кредитов, создание операторов", Set.of(
+                Permission.USER_MANAGE, Permission.CREDIT_APPROVE, Permission.CREDIT_CANCEL,
+                Permission.CREDIT_VIEW, Permission.CLIENT_MANAGE, Permission.CARD_LIST, Permission.REPORT_VIEW));
 
-        role(tenantId, "operator", "Оператор: создание заявок и клиентов, просмотр", Set.of(
+        role(tenantId, "operator", "Оператор (филиал): клиенты и заявки", Set.of(
                 Permission.CREDIT_ADD, Permission.CREDIT_VIEW, Permission.CLIENT_MANAGE, Permission.CARD_LIST));
-
-        role(tenantId, "moderator", "Модератор: подтверждение и отмена кредитов", Set.of(
-                Permission.CREDIT_APPROVE, Permission.CREDIT_CANCEL, Permission.CREDIT_VIEW));
 
         return director;
     }
@@ -210,14 +209,57 @@ public class OrganisationService {
         return organisationRepo.findAll();
     }
 
+    /**
+     * Создать филиал вместе с его модератором (начальником филиала) — одной операцией.
+     * Филиал без начальника не создаётся. Модератору назначается роль "moderator",
+     * его branchId = созданный филиал, учётные данные уходят по SMS.
+     * Один модератор на филиал (создаётся ровно один здесь; дальше операторов добавляют отдельно).
+     */
     @Transactional
-    public Branch addBranch(String name, String frontId) {
-        Branch b = new Branch();
-        b.setName(name);
-        b.setFrontId(frontId);
-        b.setStatus(EntityStatus.ACTIVE);
-        return branchRepo.save(b);
+    public BranchWithModerator addBranchWithModerator(CreateBranchWithModeratorRequest req) {
+        Long tenantId = TenantContext.requireTenantId();
+
+        if (userRepo.existsByTenantIdAndUsername(tenantId, req.moderatorUsername())) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "Пользователь с таким username уже существует");
+        }
+
+        Role moderatorRole = roleRepo.findByTenantIdAndName(tenantId, "moderator")
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT,
+                        "Роль moderator не найдена для организации"));
+
+        // 1. филиал
+        Branch branch = new Branch();
+        branch.setTenantId(tenantId);
+        branch.setName(req.branchName());
+        branch.setFrontId(req.frontId());
+        branch.setStatus(EntityStatus.ACTIVE);
+        branch = branchRepo.save(branch);
+
+        // 2. модератор филиала
+        String rawPassword = HashUtil.randomToken(9);
+        String otp = HashUtil.numericOtp(6);
+
+        User moderator = new User();
+        moderator.setTenantId(tenantId);
+        moderator.setUsername(req.moderatorUsername());
+        moderator.setPasswordHash(passwordEncoder.encode(rawPassword));
+        moderator.setFirstName(req.moderatorFirstName());
+        moderator.setLastName(req.moderatorLastName());
+        moderator.setPhone(req.moderatorPhone());
+        moderator.setBranchId(branch.getId());
+        moderator.setStatus(EntityStatus.ACTIVE);
+        moderator.setPasswordExpiry(LocalDate.now().plusMonths(3));
+        moderator.setRoles(Set.of(moderatorRole));
+        moderator = userRepo.save(moderator);
+
+        notificationService.sendCredentials(req.moderatorPhone(), req.moderatorUsername(), rawPassword, otp);
+
+        return new BranchWithModerator(branch, moderator.getId(), moderator.getUsername());
     }
+
+    /** Результат создания филиала с модератором (без раскрытия пароля). */
+    public record BranchWithModerator(Branch branch, Long moderatorId, String moderatorUsername) {}
 
     @Transactional(readOnly = true)
     public List<Branch> listBranches() {

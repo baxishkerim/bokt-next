@@ -32,6 +32,7 @@ import java.time.LocalDate;
         }
 )
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = "branchFilter", condition = "branch_id = :branchId")
 public class Client extends TenantAwareEntity {
 
     /** ФИН / персональный идентификационный номер. */

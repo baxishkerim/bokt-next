@@ -27,4 +27,8 @@ public final class CurrentUser {
     public static Long requireUserId() {
         return require().userId();
     }
+
+    public static Long branchId() {
+        return find().map(AuthenticatedUser::branchId).orElse(null);
+    }
 }

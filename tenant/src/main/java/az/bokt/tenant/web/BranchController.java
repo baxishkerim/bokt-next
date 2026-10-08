@@ -1,7 +1,8 @@
 package az.bokt.tenant.web;
 
-import az.bokt.tenant.dto.BranchRequest;
 import az.bokt.tenant.dto.BranchResponse;
+import az.bokt.tenant.dto.BranchWithModeratorResponse;
+import az.bokt.tenant.dto.CreateBranchWithModeratorRequest;
 import az.bokt.tenant.service.OrganisationService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Управление филиалами в рамках своей NBCO. */
+/** Управление филиалами в рамках своей NBCO. Создаёт директор (USER_MANAGE). */
 @RestController
 @RequestMapping("/api/branches")
 public class BranchController {
@@ -24,10 +25,11 @@ public class BranchController {
         this.organisationService = organisationService;
     }
 
+    /** Создать филиал вместе с его модератором (начальником филиала). */
     @PostMapping
     @PreAuthorize("hasAuthority('USER_MANAGE')")
-    public BranchResponse add(@Valid @RequestBody BranchRequest req) {
-        return BranchResponse.from(organisationService.addBranch(req.name(), req.frontId()));
+    public BranchWithModeratorResponse add(@Valid @RequestBody CreateBranchWithModeratorRequest req) {
+        return BranchWithModeratorResponse.from(organisationService.addBranchWithModerator(req));
     }
 
     @GetMapping

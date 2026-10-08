@@ -32,6 +32,7 @@ import java.time.Instant;
         @Index(name = "ix_credit_file", columnList = "file_id")
 })
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = "branchFilter", condition = "branch_id = :branchId")
 public class Credit extends TenantAwareEntity {
 
     @Column(name = "client_id", nullable = false)

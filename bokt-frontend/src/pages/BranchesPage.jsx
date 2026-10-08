@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Paper,
+  Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Paper,
   Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -11,12 +11,17 @@ import { P } from '../constants.js';
 import { branchesApi } from '../api/branches.js';
 import { errorMessage } from '../api/client.js';
 
+const EMPTY = {
+  branchName: '', frontId: '',
+  moderatorUsername: '', moderatorFirstName: '', moderatorLastName: '', moderatorPhone: '',
+};
+
 export default function BranchesPage() {
   const { hasAuthority } = useAuth();
   const { notify } = useFeedback();
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', frontId: '' });
+  const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -29,18 +34,25 @@ export default function BranchesPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
   const submit = async () => {
     setBusy(true);
-    try { await branchesApi.add(form); setOpen(false); setForm({ name: '', frontId: '' }); load(); notify('Филиал добавлен'); }
-    catch (e) { notify(errorMessage(e), 'error'); }
+    try {
+      await branchesApi.add(form);
+      setOpen(false); setForm(EMPTY); load();
+      notify('Филиал и его модератор созданы, модератору отправлены данные по SMS');
+    } catch (e) { notify(errorMessage(e), 'error'); }
     finally { setBusy(false); }
   };
 
+  const ready = form.branchName && form.moderatorUsername && form.moderatorPhone;
+
   return (
     <Box>
-      <PageHeader title="Филиалы" subtitle="Подразделения организации"
+      <PageHeader title="Филиалы" subtitle="Подразделения организации. Филиал создаётся вместе с модератором (начальником)."
         action={hasAuthority(P.USER_MANAGE) && (
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>Добавить филиал</Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>Создать филиал</Button>
         )} />
 
       <TableContainer component={Paper} variant="outlined">
@@ -70,17 +82,27 @@ export default function BranchesPage() {
         </Table>
       </TableContainer>
 
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Новый филиал</DialogTitle>
+      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Новый филиал и его модератор</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField label="Название" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <TextField label="Front ID" value={form.frontId} onChange={(e) => setForm({ ...form, frontId: e.target.value })} />
+            <Divider textAlign="left"><Typography variant="caption">Филиал</Typography></Divider>
+            <TextField label="Название филиала" value={form.branchName} onChange={set('branchName')} />
+            <TextField label="Front ID" value={form.frontId} onChange={set('frontId')} />
+
+            <Divider textAlign="left"><Typography variant="caption">Модератор (начальник филиала)</Typography></Divider>
+            <TextField label="Логин модератора" value={form.moderatorUsername} onChange={set('moderatorUsername')}
+              helperText="Пароль и OTP уйдут ему по SMS" />
+            <Stack direction="row" spacing={2}>
+              <TextField label="Имя" value={form.moderatorFirstName} onChange={set('moderatorFirstName')} sx={{ flex: 1 }} />
+              <TextField label="Фамилия" value={form.moderatorLastName} onChange={set('moderatorLastName')} sx={{ flex: 1 }} />
+            </Stack>
+            <TextField label="Телефон модератора" value={form.moderatorPhone} onChange={set('moderatorPhone')} placeholder="+994..." />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>Отмена</Button>
-          <Button variant="contained" onClick={submit} disabled={busy || !form.name}>Добавить</Button>
+          <Button variant="contained" onClick={submit} disabled={busy || !ready}>Создать</Button>
         </DialogActions>
       </Dialog>
     </Box>

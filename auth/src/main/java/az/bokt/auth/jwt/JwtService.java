@@ -26,6 +26,7 @@ public class JwtService {
     public static final String CLAIM_TENANT = "tenantId";
     public static final String CLAIM_USERNAME = "username";
     public static final String CLAIM_SUPER_ADMIN = "superAdmin";
+    public static final String CLAIM_BRANCH = "branchId";
     public static final String CLAIM_AUTHORITIES = "authorities";
 
     private final RsaKeyProvider keys;
@@ -49,6 +50,7 @@ public class JwtService {
                 .claim(CLAIM_TENANT, user.getTenantId())
                 .claim(CLAIM_USERNAME, user.getUsername())
                 .claim(CLAIM_SUPER_ADMIN, user.isSuperAdmin())
+                .claim(CLAIM_BRANCH, user.getBranchId())
                 .claim(CLAIM_AUTHORITIES, authorities)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(exp))
@@ -70,12 +72,15 @@ public class JwtService {
         @SuppressWarnings("unchecked")
         List<String> authorities = c.get(CLAIM_AUTHORITIES, List.class);
         boolean superAdmin = Boolean.TRUE.equals(c.get(CLAIM_SUPER_ADMIN, Boolean.class));
+        Long branchId = c.get(CLAIM_BRANCH, Number.class) == null
+                ? null : c.get(CLAIM_BRANCH, Number.class).longValue();
 
         return new ParsedToken(
                 Long.valueOf(c.getSubject()),
                 tenantId,
                 c.get(CLAIM_USERNAME, String.class),
                 superAdmin,
+                branchId,
                 authorities == null ? Set.of() : Set.copyOf(authorities)
         );
     }
@@ -85,6 +90,7 @@ public class JwtService {
             Long tenantId,
             String username,
             boolean superAdmin,
+            Long branchId,
             Set<String> authorities
     ) {}
 }

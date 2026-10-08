@@ -29,6 +29,7 @@ public class ClientService {
         }
         Client c = new Client();
         applyFields(c, req);
+        c.setBranchId(CurrentUser.branchId());   // филиал создателя (у директора null → виден всей организации)
         c.setCreatedBy(CurrentUser.requireUserId());
         c.setModifiedBy(CurrentUser.requireUserId());
         return clientRepo.save(c);

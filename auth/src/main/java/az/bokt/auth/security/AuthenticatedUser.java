@@ -5,5 +5,6 @@ public record AuthenticatedUser(
         Long userId,
         Long tenantId,
         String username,
-        boolean superAdmin
+        boolean superAdmin,
+        Long branchId
 ) {}

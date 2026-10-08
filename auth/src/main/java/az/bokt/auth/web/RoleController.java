@@ -19,9 +19,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Управление ролями. Создание/изменение/удаление — только супер-админ (ROLE_MANAGE):
+ * набор ролей задаётся при регистрации NBCO, директор роли не создаёт.
+ * Чтение списка ролей доступно и тем, кто управляет пользователями (USER_MANAGE),
+ * чтобы назначать роли сотрудникам.
+ */
 @RestController
 @RequestMapping("/api/roles")
-@PreAuthorize("hasAuthority('ROLE_MANAGE')")
 public class RoleController {
 
     private final RoleService roleService;
@@ -30,22 +35,26 @@ public class RoleController {
         this.roleService = roleService;
     }
 
-    @PostMapping
-    public RoleResponse create(@Valid @RequestBody CreateRoleRequest req) {
-        return RoleResponse.from(roleService.create(req));
-    }
-
     @GetMapping
+    @PreAuthorize("hasAnyAuthority('ROLE_MANAGE','USER_MANAGE')")
     public List<RoleResponse> list() {
         return roleService.list().stream().map(RoleResponse::from).toList();
     }
 
+    @PostMapping
+    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
+    public RoleResponse create(@Valid @RequestBody CreateRoleRequest req) {
+        return RoleResponse.from(roleService.create(req));
+    }
+
     @PutMapping("/{id}/permissions")
+    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
     public RoleResponse updatePermissions(@PathVariable Long id, @RequestBody Set<Permission> permissions) {
         return RoleResponse.from(roleService.updatePermissions(id, permissions));
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         roleService.delete(id);
         return ResponseEntity.noContent().build();

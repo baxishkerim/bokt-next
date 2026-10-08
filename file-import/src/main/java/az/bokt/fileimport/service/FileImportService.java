@@ -119,6 +119,7 @@ public class FileImportService {
         credit.setCurrencyId(currencyId);
         credit.setDescription(description);
         credit.setStatus(CreditStatus.NEW);
+        credit.setBranchId(CurrentUser.branchId());
         credit.setFileId(fileId);
         credit.setCreatedBy(CurrentUser.requireUserId());
         creditRepo.save(credit);

@@ -60,7 +60,7 @@ public class CreditService {
         credit.setClientId(client.getId());
         credit.setAmountMinor(Money.toMinor(req.amount()));
         credit.setCurrencyId(req.currencyId());
-        credit.setBranchId(req.branchId());
+        credit.setBranchId(CurrentUser.branchId());   // филиал оператора
         credit.setSecretWord(req.secretWord());
         credit.setDescription(req.description());
         credit.setStatus(CreditStatus.NEW);

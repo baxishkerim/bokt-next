@@ -1,6 +1,7 @@
 package az.bokt.auth.security;
 
 import az.bokt.auth.jwt.JwtService;
+import az.bokt.common.tenant.BranchContext;
 import az.bokt.common.tenant.TenantContext;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -57,7 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .map(SimpleGrantedAuthority::new)
                     .toList();
             AuthenticatedUser principal = new AuthenticatedUser(
-                    parsed.userId(), parsed.tenantId(), parsed.username(), parsed.superAdmin());
+                    parsed.userId(), parsed.tenantId(), parsed.username(), parsed.superAdmin(), parsed.branchId());
 
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(principal, null, authorities);
@@ -69,6 +70,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             } else if (parsed.tenantId() != null) {
                 TenantContext.setTenantId(parsed.tenantId());
             }
+            // филиал: если задан — включит branchFilter (модератор/оператор видят свой филиал)
+            if (!parsed.superAdmin() && parsed.branchId() != null) {
+                BranchContext.setBranchId(parsed.branchId());
+            }
 
             chain.doFilter(request, response);
         } catch (JwtException ex) {
@@ -77,6 +82,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
         } finally {
             TenantContext.clear();
+            BranchContext.clear();
         }
     }
 }
