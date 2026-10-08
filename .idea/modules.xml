@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/api/bokt-next.api.main.iml" filepath="$PROJECT_DIR$/.idea/modules/api/bokt-next.api.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/audit/bokt-next.audit.main.iml" filepath="$PROJECT_DIR$/.idea/modules/audit/bokt-next.audit.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/auth/bokt-next.auth.main.iml" filepath="$PROJECT_DIR$/.idea/modules/auth/bokt-next.auth.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/client/bokt-next.client.main.iml" filepath="$PROJECT_DIR$/.idea/modules/client/bokt-next.client.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/common/bokt-next.common.main.iml" filepath="$PROJECT_DIR$/.idea/modules/common/bokt-next.common.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/credit/bokt-next.credit.main.iml" filepath="$PROJECT_DIR$/.idea/modules/credit/bokt-next.credit.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/file-import/bokt-next.file-import.main.iml" filepath="$PROJECT_DIR$/.idea/modules/file-import/bokt-next.file-import.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/notification/bokt-next.notification.main.iml" filepath="$PROJECT_DIR$/.idea/modules/notification/bokt-next.notification.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/tenant/bokt-next.tenant.main.iml" filepath="$PROJECT_DIR$/.idea/modules/tenant/bokt-next.tenant.main.iml" />
+    </modules>
+  </component>
+</project>

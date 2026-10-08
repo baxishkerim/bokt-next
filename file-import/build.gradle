@@ -1,0 +1,6 @@
+dependencies {
+    api project(':common')
+    implementation project(':credit')
+    implementation project(':client')
+    implementation project(':auth')
+}

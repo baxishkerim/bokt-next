@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+**/.gradle/
+build/
+**/build/
+
+# IntelliJ IDEA
+.idea/
+**/.idea/
+*.iml
+
+# Node
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# прочее
+*.log
+.DS_Store

@@ -1,0 +1,26 @@
+apply plugin: 'org.springframework.boot'
+
+dependencies {
+    implementation project(':common')
+    implementation project(':auth')
+    implementation project(':tenant')
+    implementation project(':client')
+    implementation project(':credit')
+    implementation project(':notification')
+    implementation project(':file-import')
+    implementation project(':audit')
+
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:junit-jupiter:1.20.1'
+    testImplementation 'org.testcontainers:postgresql:1.20.1'
+}
+
+bootJar {
+    archiveFileName = 'bokt-next.jar'
+}

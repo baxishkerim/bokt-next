@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16
+    container_name: bokt-pg
+    environment:
+      POSTGRES_DB: bokt
+      POSTGRES_USER: bokt
+      POSTGRES_PASSWORD: bokt
+    ports:
+      - "5432:5432"
+    volumes:
+      - bokt-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bokt -d bokt"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    container_name: bokt-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BOKT_DB_URL: jdbc:postgresql://db:5432/bokt
+      BOKT_DB_USER: bokt
+      BOKT_DB_PASSWORD: bokt
+      # пароль супер-админа для первого старта (иначе будет сгенерирован в лог)
+      BOKT_SUPERADMIN_PASSWORD: admin12345
+    ports:
+      - "8080:8080"
+
+volumes:
+  bokt-pg-data:

@@ -1,0 +1,8 @@
+dependencies {
+    api project(':common')
+    implementation project(':auth')
+    implementation project(':tenant')
+    implementation project(':client')
+    implementation project(':notification')
+    implementation project(':audit')
+}

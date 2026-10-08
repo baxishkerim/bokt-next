@@ -1,0 +1,5 @@
+dependencies {
+    api project(':common')
+    implementation project(':auth')
+    implementation project(':notification')
+}

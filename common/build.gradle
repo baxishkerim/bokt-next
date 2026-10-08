@@ -1,0 +1,6 @@
+// common: shared domain base, error handling, tenant context. Plain library (no bootJar).
+dependencies {
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    api 'org.springframework.boot:spring-boot-starter-web'
+    api 'org.springframework.boot:spring-boot-starter-validation'
+}

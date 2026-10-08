@@ -1,0 +1,18 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'bokt-next'
+
+include 'common'
+include 'auth'
+include 'tenant'
+include 'client'
+include 'credit'
+include 'notification'
+include 'file-import'
+include 'audit'
+include 'api'

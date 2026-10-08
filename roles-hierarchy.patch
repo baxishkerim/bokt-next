@@ -1,0 +1,475 @@
+diff --git a/api/src/main/java/az/bokt/api/tenant/TenantFilterAspect.java b/api/src/main/java/az/bokt/api/tenant/TenantFilterAspect.java
+index 8a3d2f5..34cb73e 100644
+--- a/api/src/main/java/az/bokt/api/tenant/TenantFilterAspect.java
++++ b/api/src/main/java/az/bokt/api/tenant/TenantFilterAspect.java
+@@ -1,5 +1,6 @@
+ package az.bokt.api.tenant;
+ 
++import az.bokt.common.tenant.BranchContext;
+ import az.bokt.common.tenant.TenantContext;
+ import jakarta.persistence.EntityManager;
+ import jakarta.persistence.PersistenceContext;
+@@ -11,44 +12,52 @@ import org.springframework.core.annotation.Order;
+ import org.springframework.stereotype.Component;
+ 
+ /**
+- * Включает Hibernate-фильтр {@code tenantFilter} на время выполнения транзакционных
+- * методов сервисов, чтобы изоляция по тенанту работала автоматически, без ручного
+- * добавления условия tenant_id в каждый запрос (частый источник ошибок в BOKT).
+- * <p>
+- * Порядок ({@code @Order(100)}) вместе с {@link TransactionConfig} (tx order 0)
+- * гарантирует, что аспект выполняется ВНУТРИ транзакции — фильтр накладывается на
+- * ту же Hibernate-сессию, что и запросы метода.
+- * <p>
+- * Для супер-админа (кросс-тенантный режим) фильтр не включается. При вложенных вызовах
+- * сервисов фильтр включает/выключает только внешний вызов (защита по getEnabledFilter).
++ * Включает Hibernate-фильтры изоляции на время транзакционных методов сервисов:
++ * <ul>
++ *   <li>{@code tenantFilter} — по организации (кроме супер-админа);</li>
++ *   <li>{@code branchFilter} — по филиалу, только если у пользователя задан филиал
++ *       (модератор/оператор). Директор без филиала видит всю организацию.</li>
++ * </ul>
++ * Порядок @Order(100) + TransactionConfig(order 0) гарантируют выполнение ВНУТРИ транзакции.
++ * Защита от вложенных вызовов: включает/выключает только тот вызов, который включил фильтр.
+  */
+ @Aspect
+ @Component
+ @Order(100)
+ public class TenantFilterAspect {
+ 
+-    private static final String FILTER = "tenantFilter";
++    private static final String TENANT_FILTER = "tenantFilter";
++    private static final String BRANCH_FILTER = "branchFilter";
+ 
+     @PersistenceContext
+     private EntityManager entityManager;
+ 
+     @Around("@within(org.springframework.stereotype.Service) && execution(* az.bokt..*Service.*(..))")
+-    public Object applyTenantFilter(ProceedingJoinPoint pjp) throws Throwable {
++    public Object applyFilters(ProceedingJoinPoint pjp) throws Throwable {
+         boolean crossTenant = TenantContext.isCrossTenant();
+         Long tenantId = TenantContext.getTenantId();
++        Long branchId = BranchContext.getBranchId();
+ 
+         Session session = entityManager.unwrap(Session.class);
+-        boolean enabledHere = false;
++        boolean tenantEnabledHere = false;
++        boolean branchEnabledHere = false;
+ 
+-        if (!crossTenant && tenantId != null && session.getEnabledFilter(FILTER) == null) {
+-            session.enableFilter(FILTER).setParameter("tenantId", tenantId);
+-            enabledHere = true;
++        if (!crossTenant && tenantId != null && session.getEnabledFilter(TENANT_FILTER) == null) {
++            session.enableFilter(TENANT_FILTER).setParameter("tenantId", tenantId);
++            tenantEnabledHere = true;
++        }
++        if (!crossTenant && branchId != null && session.getEnabledFilter(BRANCH_FILTER) == null) {
++            session.enableFilter(BRANCH_FILTER).setParameter("branchId", branchId);
++            branchEnabledHere = true;
+         }
+         try {
+             return pjp.proceed();
+         } finally {
+-            if (enabledHere) {
+-                session.disableFilter(FILTER);
++            if (branchEnabledHere) {
++                session.disableFilter(BRANCH_FILTER);
++            }
++            if (tenantEnabledHere) {
++                session.disableFilter(TENANT_FILTER);
+             }
+         }
+     }
+diff --git a/api/src/main/resources/db/migration/V9__client_branch.sql b/api/src/main/resources/db/migration/V9__client_branch.sql
+new file mode 100644
+index 0000000..2fd3c70
+--- /dev/null
++++ b/api/src/main/resources/db/migration/V9__client_branch.sql
+@@ -0,0 +1,4 @@
++-- Филиал клиента: клиенты фильтруются по филиалу так же, как кредиты
++-- (модератор/оператор видят только свой филиал; директор — всю организацию).
++alter table clients add column branch_id bigint;
++create index ix_client_branch on clients(branch_id);
+diff --git a/auth/src/main/java/az/bokt/auth/jwt/JwtService.java b/auth/src/main/java/az/bokt/auth/jwt/JwtService.java
+index cfee8f0..8db2d3d 100644
+--- a/auth/src/main/java/az/bokt/auth/jwt/JwtService.java
++++ b/auth/src/main/java/az/bokt/auth/jwt/JwtService.java
+@@ -26,6 +26,7 @@ public class JwtService {
+     public static final String CLAIM_TENANT = "tenantId";
+     public static final String CLAIM_USERNAME = "username";
+     public static final String CLAIM_SUPER_ADMIN = "superAdmin";
++    public static final String CLAIM_BRANCH = "branchId";
+     public static final String CLAIM_AUTHORITIES = "authorities";
+ 
+     private final RsaKeyProvider keys;
+@@ -49,6 +50,7 @@ public class JwtService {
+                 .claim(CLAIM_TENANT, user.getTenantId())
+                 .claim(CLAIM_USERNAME, user.getUsername())
+                 .claim(CLAIM_SUPER_ADMIN, user.isSuperAdmin())
++                .claim(CLAIM_BRANCH, user.getBranchId())
+                 .claim(CLAIM_AUTHORITIES, authorities)
+                 .issuedAt(Date.from(now))
+                 .expiration(Date.from(exp))
+@@ -70,12 +72,15 @@ public class JwtService {
+         @SuppressWarnings("unchecked")
+         List<String> authorities = c.get(CLAIM_AUTHORITIES, List.class);
+         boolean superAdmin = Boolean.TRUE.equals(c.get(CLAIM_SUPER_ADMIN, Boolean.class));
++        Long branchId = c.get(CLAIM_BRANCH, Number.class) == null
++                ? null : c.get(CLAIM_BRANCH, Number.class).longValue();
+ 
+         return new ParsedToken(
+                 Long.valueOf(c.getSubject()),
+                 tenantId,
+                 c.get(CLAIM_USERNAME, String.class),
+                 superAdmin,
++                branchId,
+                 authorities == null ? Set.of() : Set.copyOf(authorities)
+         );
+     }
+@@ -85,6 +90,7 @@ public class JwtService {
+             Long tenantId,
+             String username,
+             boolean superAdmin,
++            Long branchId,
+             Set<String> authorities
+     ) {}
+ }
+diff --git a/auth/src/main/java/az/bokt/auth/security/AuthenticatedUser.java b/auth/src/main/java/az/bokt/auth/security/AuthenticatedUser.java
+index 449c6b1..80b1d0c 100644
+--- a/auth/src/main/java/az/bokt/auth/security/AuthenticatedUser.java
++++ b/auth/src/main/java/az/bokt/auth/security/AuthenticatedUser.java
+@@ -5,5 +5,6 @@ public record AuthenticatedUser(
+         Long userId,
+         Long tenantId,
+         String username,
+-        boolean superAdmin
++        boolean superAdmin,
++        Long branchId
+ ) {}
+diff --git a/auth/src/main/java/az/bokt/auth/security/CurrentUser.java b/auth/src/main/java/az/bokt/auth/security/CurrentUser.java
+index 3bd1896..c6cae3e 100644
+--- a/auth/src/main/java/az/bokt/auth/security/CurrentUser.java
++++ b/auth/src/main/java/az/bokt/auth/security/CurrentUser.java
+@@ -27,4 +27,8 @@ public final class CurrentUser {
+     public static Long requireUserId() {
+         return require().userId();
+     }
++
++    public static Long branchId() {
++        return find().map(AuthenticatedUser::branchId).orElse(null);
++    }
+ }
+diff --git a/auth/src/main/java/az/bokt/auth/security/JwtAuthenticationFilter.java b/auth/src/main/java/az/bokt/auth/security/JwtAuthenticationFilter.java
+index 8169d6b..70a68d5 100644
+--- a/auth/src/main/java/az/bokt/auth/security/JwtAuthenticationFilter.java
++++ b/auth/src/main/java/az/bokt/auth/security/JwtAuthenticationFilter.java
+@@ -1,6 +1,7 @@
+ package az.bokt.auth.security;
+ 
+ import az.bokt.auth.jwt.JwtService;
++import az.bokt.common.tenant.BranchContext;
+ import az.bokt.common.tenant.TenantContext;
+ import io.jsonwebtoken.JwtException;
+ import jakarta.servlet.FilterChain;
+@@ -57,7 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
+                     .map(SimpleGrantedAuthority::new)
+                     .toList();
+             AuthenticatedUser principal = new AuthenticatedUser(
+-                    parsed.userId(), parsed.tenantId(), parsed.username(), parsed.superAdmin());
++                    parsed.userId(), parsed.tenantId(), parsed.username(), parsed.superAdmin(), parsed.branchId());
+ 
+             UsernamePasswordAuthenticationToken auth =
+                     new UsernamePasswordAuthenticationToken(principal, null, authorities);
+@@ -69,6 +70,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
+             } else if (parsed.tenantId() != null) {
+                 TenantContext.setTenantId(parsed.tenantId());
+             }
++            // филиал: если задан — включит branchFilter (модератор/оператор видят свой филиал)
++            if (!parsed.superAdmin() && parsed.branchId() != null) {
++                BranchContext.setBranchId(parsed.branchId());
++            }
+ 
+             chain.doFilter(request, response);
+         } catch (JwtException ex) {
+@@ -77,6 +82,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
+             chain.doFilter(request, response);
+         } finally {
+             TenantContext.clear();
++            BranchContext.clear();
+         }
+     }
+ }
+diff --git a/auth/src/main/java/az/bokt/auth/service/UserService.java b/auth/src/main/java/az/bokt/auth/service/UserService.java
+index 3873374..c64a5ed 100644
+--- a/auth/src/main/java/az/bokt/auth/service/UserService.java
++++ b/auth/src/main/java/az/bokt/auth/service/UserService.java
+@@ -1,10 +1,12 @@
+ package az.bokt.auth.service;
+ 
++import az.bokt.auth.domain.Permission;
+ import az.bokt.auth.domain.Role;
+ import az.bokt.auth.domain.User;
+ import az.bokt.auth.dto.CreateUserRequest;
+ import az.bokt.auth.repo.RoleRepository;
+ import az.bokt.auth.repo.UserRepository;
++import az.bokt.auth.security.CurrentUser;
+ import az.bokt.common.domain.EntityStatus;
+ import az.bokt.common.domain.Gender;
+ import az.bokt.common.error.BusinessException;
+@@ -49,8 +51,33 @@ public class UserService {
+             throw new BusinessException(ErrorCode.CONFLICT, "Пользователь с таким username уже существует");
+         }
+ 
++        User creator = userRepo.findById(CurrentUser.requireUserId())
++                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHENTICATED));
++
+         Set<Role> roles = resolveRoles(req.roleIds());
+ 
++        // Защита от эскалации: чувствительные (административные) права нельзя выдать,
++        // если их нет у самого создающего. Операционные права (работа с кредитами/клиентами)
++        // назначаются свободно — иначе директор не смог бы создать модератора, а модератор оператора.
++        if (!creator.isSuperAdmin()) {
++            Set<Permission> creatorPerms = creator.effectivePermissions();
++            Set<Permission> elevated = java.util.EnumSet.of(
++                    Permission.TENANT_MANAGE, Permission.ROLE_MANAGE,
++                    Permission.USER_MANAGE, Permission.CARD_MANAGE);
++            for (Role r : roles) {
++                for (Permission p : r.getPermissions()) {
++                    if (elevated.contains(p) && !creatorPerms.contains(p)) {
++                        throw new BusinessException(ErrorCode.ACCESS_DENIED,
++                                "Нельзя выдать административное право, которого нет у вас: " + p.name());
++                    }
++                }
++            }
++        }
++
++        // Филиал: если у создающего есть филиал (модератор) — новый пользователь в тот же филиал;
++        // если филиала нет (директор) — берётся из запроса (директор выбирает филиал модератору).
++        Long branchId = creator.getBranchId() != null ? creator.getBranchId() : req.branchId();
++
+         String rawPassword = HashUtil.randomToken(9);   // временный пароль
+         String otp = HashUtil.numericOtp(6);            // OTP для первого входа отправляется вместе
+ 
+@@ -63,7 +90,7 @@ public class UserService {
+         user.setBirthDate(req.birthDate());
+         user.setGender(req.gender() == null ? Gender.UNKNOWN : req.gender());
+         user.setPhone(req.phone());
+-        user.setBranchId(req.branchId());
++        user.setBranchId(branchId);
+         user.setStatus(EntityStatus.ACTIVE);
+         user.setPasswordExpiry(LocalDate.now().plusMonths(3));
+         user.setRoles(roles);
+diff --git a/auth/src/main/java/az/bokt/auth/web/RoleController.java b/auth/src/main/java/az/bokt/auth/web/RoleController.java
+index a9fc178..441984b 100644
+--- a/auth/src/main/java/az/bokt/auth/web/RoleController.java
++++ b/auth/src/main/java/az/bokt/auth/web/RoleController.java
+@@ -19,9 +19,14 @@ import org.springframework.web.bind.annotation.RestController;
+ import java.util.List;
+ import java.util.Set;
+ 
++/**
++ * Управление ролями. Создание/изменение/удаление — только супер-админ (ROLE_MANAGE):
++ * набор ролей задаётся при регистрации NBCO, директор роли не создаёт.
++ * Чтение списка ролей доступно и тем, кто управляет пользователями (USER_MANAGE),
++ * чтобы назначать роли сотрудникам.
++ */
+ @RestController
+ @RequestMapping("/api/roles")
+-@PreAuthorize("hasAuthority('ROLE_MANAGE')")
+ public class RoleController {
+ 
+     private final RoleService roleService;
+@@ -30,22 +35,26 @@ public class RoleController {
+         this.roleService = roleService;
+     }
+ 
+-    @PostMapping
+-    public RoleResponse create(@Valid @RequestBody CreateRoleRequest req) {
+-        return RoleResponse.from(roleService.create(req));
+-    }
+-
+     @GetMapping
++    @PreAuthorize("hasAnyAuthority('ROLE_MANAGE','USER_MANAGE')")
+     public List<RoleResponse> list() {
+         return roleService.list().stream().map(RoleResponse::from).toList();
+     }
+ 
++    @PostMapping
++    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
++    public RoleResponse create(@Valid @RequestBody CreateRoleRequest req) {
++        return RoleResponse.from(roleService.create(req));
++    }
++
+     @PutMapping("/{id}/permissions")
++    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
+     public RoleResponse updatePermissions(@PathVariable Long id, @RequestBody Set<Permission> permissions) {
+         return RoleResponse.from(roleService.updatePermissions(id, permissions));
+     }
+ 
+     @DeleteMapping("/{id}")
++    @PreAuthorize("hasAuthority('ROLE_MANAGE')")
+     public ResponseEntity<Void> delete(@PathVariable Long id) {
+         roleService.delete(id);
+         return ResponseEntity.noContent().build();
+diff --git a/client/src/main/java/az/bokt/client/domain/Client.java b/client/src/main/java/az/bokt/client/domain/Client.java
+index 55d82c4..4f70d5b 100644
+--- a/client/src/main/java/az/bokt/client/domain/Client.java
++++ b/client/src/main/java/az/bokt/client/domain/Client.java
+@@ -32,6 +32,7 @@ import java.time.LocalDate;
+         }
+ )
+ @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
++@Filter(name = "branchFilter", condition = "branch_id = :branchId")
+ public class Client extends TenantAwareEntity {
+ 
+     /** ФИН / персональный идентификационный номер. */
+diff --git a/client/src/main/java/az/bokt/client/service/ClientService.java b/client/src/main/java/az/bokt/client/service/ClientService.java
+index 3214229..52e6c36 100644
+--- a/client/src/main/java/az/bokt/client/service/ClientService.java
++++ b/client/src/main/java/az/bokt/client/service/ClientService.java
+@@ -29,6 +29,7 @@ public class ClientService {
+         }
+         Client c = new Client();
+         applyFields(c, req);
++        c.setBranchId(CurrentUser.branchId());   // филиал создателя (у директора null → виден всей организации)
+         c.setCreatedBy(CurrentUser.requireUserId());
+         c.setModifiedBy(CurrentUser.requireUserId());
+         return clientRepo.save(c);
+diff --git a/common/src/main/java/az/bokt/common/domain/package-info.java b/common/src/main/java/az/bokt/common/domain/package-info.java
+index 2f29533..17eebcf 100644
+--- a/common/src/main/java/az/bokt/common/domain/package-info.java
++++ b/common/src/main/java/az/bokt/common/domain/package-info.java
+@@ -1,12 +1,22 @@
+ /**
+- * Определение Hibernate-фильтра тенанта. Объявляется один раз здесь;
+- * применяется аннотацией {@code @Filter(name = "tenantFilter")} на каждой
+- * tenant-scoped сущности. Включается по запросу в {@code TenantFilterAspect}.
++ * Определения Hibernate-фильтров изоляции данных, объявляются один раз здесь:
++ * <ul>
++ *   <li>{@code tenantFilter} — изоляция по организации (NBCO), применяется ко всем
++ *       tenant-scoped сущностям;</li>
++ *   <li>{@code branchFilter} — изоляция по филиалу, применяется к кредитам и клиентам;
++ *       включается только когда у текущего пользователя задан филиал (модератор/оператор).
++ *       Директор без филиала видит всю организацию.</li>
++ * </ul>
++ * Оба включаются в {@code TenantFilterAspect}.
+  */
+ @FilterDef(
+         name = "tenantFilter",
+         parameters = @ParamDef(name = "tenantId", type = Long.class)
+ )
++@FilterDef(
++        name = "branchFilter",
++        parameters = @ParamDef(name = "branchId", type = Long.class)
++)
+ package az.bokt.common.domain;
+ 
+ import org.hibernate.annotations.FilterDef;
+diff --git a/common/src/main/java/az/bokt/common/tenant/BranchContext.java b/common/src/main/java/az/bokt/common/tenant/BranchContext.java
+new file mode 100644
+index 0000000..d82f3cb
+--- /dev/null
++++ b/common/src/main/java/az/bokt/common/tenant/BranchContext.java
+@@ -0,0 +1,26 @@
++package az.bokt.common.tenant;
++
++/**
++ * Держит филиал текущего пользователя в рамках запроса. Если значение задано —
++ * Hibernate-фильтр {@code branchFilter} ограничивает кредиты и клиентов этим филиалом
++ * (модератор/оператор видят только свой филиал). Если не задано (директор, супер-админ) —
++ * фильтр по филиалу не накладывается, виден весь тенант.
++ */
++public final class BranchContext {
++
++    private static final ThreadLocal<Long> HOLDER = new ThreadLocal<>();
++
++    private BranchContext() {}
++
++    public static void setBranchId(Long branchId) {
++        HOLDER.set(branchId);
++    }
++
++    public static Long getBranchId() {
++        return HOLDER.get();
++    }
++
++    public static void clear() {
++        HOLDER.remove();
++    }
++}
+diff --git a/credit/src/main/java/az/bokt/credit/domain/Credit.java b/credit/src/main/java/az/bokt/credit/domain/Credit.java
+index 7375909..2c9c4bc 100644
+--- a/credit/src/main/java/az/bokt/credit/domain/Credit.java
++++ b/credit/src/main/java/az/bokt/credit/domain/Credit.java
+@@ -32,6 +32,7 @@ import java.time.Instant;
+         @Index(name = "ix_credit_file", columnList = "file_id")
+ })
+ @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
++@Filter(name = "branchFilter", condition = "branch_id = :branchId")
+ public class Credit extends TenantAwareEntity {
+ 
+     @Column(name = "client_id", nullable = false)
+diff --git a/credit/src/main/java/az/bokt/credit/service/CreditService.java b/credit/src/main/java/az/bokt/credit/service/CreditService.java
+index e6049c9..58bd389 100644
+--- a/credit/src/main/java/az/bokt/credit/service/CreditService.java
++++ b/credit/src/main/java/az/bokt/credit/service/CreditService.java
+@@ -60,7 +60,7 @@ public class CreditService {
+         credit.setClientId(client.getId());
+         credit.setAmountMinor(Money.toMinor(req.amount()));
+         credit.setCurrencyId(req.currencyId());
+-        credit.setBranchId(req.branchId());
++        credit.setBranchId(CurrentUser.branchId());   // филиал оператора
+         credit.setSecretWord(req.secretWord());
+         credit.setDescription(req.description());
+         credit.setStatus(CreditStatus.NEW);
+diff --git a/file-import/src/main/java/az/bokt/fileimport/service/FileImportService.java b/file-import/src/main/java/az/bokt/fileimport/service/FileImportService.java
+index 75fb611..bfbe2fe 100644
+--- a/file-import/src/main/java/az/bokt/fileimport/service/FileImportService.java
++++ b/file-import/src/main/java/az/bokt/fileimport/service/FileImportService.java
+@@ -119,6 +119,7 @@ public class FileImportService {
+         credit.setCurrencyId(currencyId);
+         credit.setDescription(description);
+         credit.setStatus(CreditStatus.NEW);
++        credit.setBranchId(CurrentUser.branchId());
+         credit.setFileId(fileId);
+         credit.setCreatedBy(CurrentUser.requireUserId());
+         creditRepo.save(credit);
+diff --git a/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java b/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
+index 4a2e1ed..784dbfc 100644
+--- a/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
++++ b/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
+@@ -148,24 +148,21 @@ public class OrganisationService {
+         return org;
+     }
+ 
+-    /** Создаёт роли director/branch_manager/operator/moderator, возвращает роль director. */
++    /** Создаёт роли director/moderator/operator, возвращает роль director. */
+     private Role seedDefaultRoles(Long tenantId) {
+-        Role director = role(tenantId, "director", "Директор: управление сотрудниками, ролями, картами, отчёты", Set.of(
+-                Permission.USER_MANAGE, Permission.ROLE_MANAGE, Permission.CARD_MANAGE,
+-                Permission.CLIENT_MANAGE, Permission.CREDIT_VIEW, Permission.CREDIT_ARCHIVE_VIEW,
+-                Permission.CREDIT_BY_PAN, Permission.REVERSAL_EXECUTE, Permission.FILE_IMPORT,
+-                Permission.REPORT_VIEW));
++        Role director = role(tenantId, "director", "Директор: вся организация, создание модераторов, карты, отчёты", Set.of(
++                Permission.USER_MANAGE, Permission.CARD_MANAGE, Permission.CLIENT_MANAGE,
++                Permission.CREDIT_VIEW, Permission.CREDIT_ARCHIVE_VIEW, Permission.CREDIT_BY_PAN,
++                Permission.REVERSAL_EXECUTE, Permission.FILE_IMPORT, Permission.REPORT_VIEW));
+ 
+-        role(tenantId, "branch_manager", "Менеджер филиала: подтверждение, клиенты, отчёты", Set.of(
+-                Permission.CREDIT_VIEW, Permission.CREDIT_APPROVE, Permission.CLIENT_MANAGE,
+-                Permission.REPORT_VIEW, Permission.CARD_LIST));
++        // Модератор = начальник филиала: подтверждает кредиты и создаёт операторов своего филиала
++        role(tenantId, "moderator", "Модератор (филиал): подтверждение кредитов, создание операторов", Set.of(
++                Permission.USER_MANAGE, Permission.CREDIT_APPROVE, Permission.CREDIT_CANCEL,
++                Permission.CREDIT_VIEW, Permission.CLIENT_MANAGE, Permission.CARD_LIST, Permission.REPORT_VIEW));
+ 
+-        role(tenantId, "operator", "Оператор: создание заявок и клиентов, просмотр", Set.of(
++        role(tenantId, "operator", "Оператор (филиал): клиенты и заявки", Set.of(
+                 Permission.CREDIT_ADD, Permission.CREDIT_VIEW, Permission.CLIENT_MANAGE, Permission.CARD_LIST));
+ 
+-        role(tenantId, "moderator", "Модератор: подтверждение и отмена кредитов", Set.of(
+-                Permission.CREDIT_APPROVE, Permission.CREDIT_CANCEL, Permission.CREDIT_VIEW));
+-
+         return director;
+     }
+ 
