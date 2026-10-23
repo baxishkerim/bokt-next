@@ -5,4 +5,8 @@ dependencies {
     implementation project(':client')
     implementation project(':notification')
     implementation project(':audit')
+
+    // SOAP-клиент процессинга TranzAxis (SAAJ)
+    implementation 'jakarta.xml.soap:jakarta.xml.soap-api:3.0.2'
+    runtimeOnly 'com.sun.xml.messaging.saaj:saaj-impl:3.0.4'
 }

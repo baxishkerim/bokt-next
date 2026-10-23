@@ -48,9 +48,18 @@ export default function Layout() {
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Toolbar sx={{ px: 2 }}>
-        <Box>
-          <Typography variant="h6" sx={{ color: 'primary.main', lineHeight: 1 }}>BOKT<span style={{ color: '#0E8A6B' }}>·</span>next</Typography>
-          <Typography variant="caption" color="text.secondary">консоль операций</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box
+            component="img"
+            src="/logo.png"
+            alt="Логотип"
+            sx={{ height: 80, width: 'auto', display: 'block' }}
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
+          <Box>
+            <Typography variant="h6" sx={{ color: 'primary.main', lineHeight: 1 }}>BOKT<span style={{ color: '#0E8A6B' }}>·</span>next</Typography>
+            <Typography variant="caption" color="text.secondary">консоль операций</Typography>
+          </Box>
         </Box>
       </Toolbar>
       <Divider />

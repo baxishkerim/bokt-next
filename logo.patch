@@ -1,0 +1,68 @@
+diff --git a/bokt-frontend/public/README-logo.txt b/bokt-frontend/public/README-logo.txt
+new file mode 100644
+index 0000000..695c2b0
+--- /dev/null
++++ b/bokt-frontend/public/README-logo.txt
+@@ -0,0 +1,10 @@
++Положи сюда файл логотипа с именем logo.png
++
++Он появится слева вверху в шапке консоли и по центру на странице входа.
++Формат: PNG (лучше с прозрачным фоном). Рекомендуемая высота ~80–150px,
++ширина любая. Если файла нет — вместо картинки показывается текст "BOKT·next".
++
++Можно использовать и другой формат (напр. logo.svg) — тогда поменяй путь
++"/logo.png" на "/logo.svg" в двух местах:
++  bokt-frontend/src/components/Layout.jsx
++  bokt-frontend/src/pages/LoginPage.jsx
+diff --git a/bokt-frontend/src/components/Layout.jsx b/bokt-frontend/src/components/Layout.jsx
+index 79cfa8a..37cce9f 100644
+--- a/bokt-frontend/src/components/Layout.jsx
++++ b/bokt-frontend/src/components/Layout.jsx
+@@ -48,9 +48,18 @@ export default function Layout() {
+   const drawer = (
+     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+       <Toolbar sx={{ px: 2 }}>
+-        <Box>
+-          <Typography variant="h6" sx={{ color: 'primary.main', lineHeight: 1 }}>BOKT<span style={{ color: '#0E8A6B' }}>·</span>next</Typography>
+-          <Typography variant="caption" color="text.secondary">консоль операций</Typography>
++        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
++          <Box
++            component="img"
++            src="/logo.png"
++            alt="Логотип"
++            sx={{ height: 40, width: 'auto', display: 'block' }}
++            onError={(e) => { e.currentTarget.style.display = 'none'; }}
++          />
++          <Box>
++            <Typography variant="h6" sx={{ color: 'primary.main', lineHeight: 1 }}>BOKT<span style={{ color: '#0E8A6B' }}>·</span>next</Typography>
++            <Typography variant="caption" color="text.secondary">консоль операций</Typography>
++          </Box>
+         </Box>
+       </Toolbar>
+       <Divider />
+diff --git a/bokt-frontend/src/pages/LoginPage.jsx b/bokt-frontend/src/pages/LoginPage.jsx
+index 99bdbc0..419e343 100644
+--- a/bokt-frontend/src/pages/LoginPage.jsx
++++ b/bokt-frontend/src/pages/LoginPage.jsx
+@@ -58,10 +58,19 @@ export default function LoginPage() {
+     <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'background.default', p: 2 }}>
+       <Card sx={{ width: 420, maxWidth: '100%', border: '1px solid', borderColor: 'divider' }}>
+         <CardContent sx={{ p: 4 }}>
+-          <Typography variant="h5" sx={{ color: 'primary.main' }}>
++          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
++            <Box
++              component="img"
++              src="/logo.png"
++              alt="Логотип"
++              sx={{ height: 72, width: 'auto', display: 'block' }}
++              onError={(e) => { e.currentTarget.style.display = 'none'; }}
++            />
++          </Box>
++          <Typography variant="h5" sx={{ color: 'primary.main', textAlign: 'center' }}>
+             BOKT<span style={{ color: '#0E8A6B' }}>·</span>next
+           </Typography>
+-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
++          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, textAlign: 'center' }}>
+             {step === 'credentials' ? 'Вход в консоль операций' : 'Подтвердите вход кодом из SMS'}
+           </Typography>
+ 

@@ -1,5 +1,6 @@
 package az.bokt.credit.payment;
 
+import az.bokt.common.domain.EntityStatus;
 import az.bokt.common.error.BusinessException;
 import az.bokt.common.error.ErrorCode;
 import az.bokt.credit.domain.Credit;
@@ -9,17 +10,20 @@ import az.bokt.credit.processing.ProcessingErrorMapper;
 import az.bokt.credit.processing.ProcessingResult;
 import az.bokt.credit.processing.ReversalRequest;
 import az.bokt.credit.repo.CreditRepository;
+import az.bokt.tenant.domain.CardType;
 import az.bokt.tenant.domain.Currency;
+import az.bokt.tenant.domain.OrgCard;
 import az.bokt.tenant.repo.CurrencyRepository;
+import az.bokt.tenant.repo.OrgCardRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Возврат средств по кредиту (полный или частичный). Реверсируется операция TOPUP
- * (средства, выданные клиенту). Аналог функции BOKT_SENDREVERSAL_PARTITIAL,
- * но с сохранением RRN/GUID и статуса — без ручной правки таблиц.
+ * Возврат средств по кредиту (полный или частичный). Реверсирует операцию выдачи (charge),
+ * связываясь с ней по Link Key = GUID исходной выдачи. Статус/RRN сохраняются — без ручной
+ * правки таблиц. Остаток карты выдачи возвращается на сумму реверса.
  */
 @Service
 public class ReversalService {
@@ -29,13 +33,16 @@ public class ReversalService {
     private final ProcessingClient processingClient;
     private final CreditRepository creditRepo;
     private final CurrencyRepository currencyRepo;
+    private final OrgCardRepository orgCardRepo;
 
     public ReversalService(ProcessingClient processingClient,
                            CreditRepository creditRepo,
-                           CurrencyRepository currencyRepo) {
+                           CurrencyRepository currencyRepo,
+                           OrgCardRepository orgCardRepo) {
         this.processingClient = processingClient;
         this.creditRepo = creditRepo;
         this.currencyRepo = currencyRepo;
+        this.orgCardRepo = orgCardRepo;
     }
 
     /**
@@ -47,7 +54,7 @@ public class ReversalService {
         Credit credit = creditRepo.findById(creditId)
                 .orElseThrow(() -> BusinessException.notFound("Кредит"));
 
-        if (credit.getStatus() != CreditStatus.APPROVED || credit.getTopupRrn() == null) {
+        if (credit.getStatus() != CreditStatus.APPROVED || credit.getChargeRrn() == null) {
             throw new BusinessException(ErrorCode.CONFLICT,
                     "Возврат возможен только по подтверждённому и выданному кредиту");
         }
@@ -60,8 +67,12 @@ public class ReversalService {
         Currency currency = currencyRepo.findById(credit.getCurrencyId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Валюта кредита не найдена"));
 
+        OrgCard mother = orgCardRepo
+                .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
+
         ProcessingResult result = processingClient.reverse(new ReversalRequest(
-                credit.getTopupGuid(), credit.getTopupRrn(), reverseAmount, currency.getCode()));
+                credit.getChargeGuid(), credit.getChargeRrn(), mother.getPan(), reverseAmount, currency.getCode()));
 
         switch (result) {
             case ProcessingResult.Approved a ->

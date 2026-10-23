@@ -65,6 +65,9 @@ public class Client extends TenantAwareEntity {
     @Column(name = "secret_word", length = 128)
     private String secretWord;
 
+    @Column(name = "branch_id")
+    private Long branchId;
+
     @Column(name = "created_by")
     private Long createdBy;
 

@@ -58,10 +58,19 @@ export default function LoginPage() {
     <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'background.default', p: 2 }}>
       <Card sx={{ width: 420, maxWidth: '100%', border: '1px solid', borderColor: 'divider' }}>
         <CardContent sx={{ p: 4 }}>
-          <Typography variant="h5" sx={{ color: 'primary.main' }}>
+          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+            <Box
+              component="img"
+              src="/logo.png"
+              alt="Логотип"
+              sx={{ height: 72, width: 'auto', display: 'block' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          </Box>
+          <Typography variant="h5" sx={{ color: 'primary.main', textAlign: 'center' }}>
             BOKT<span style={{ color: '#0E8A6B' }}>·</span>next
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, textAlign: 'center' }}>
             {step === 'credentials' ? 'Вход в консоль операций' : 'Подтвердите вход кодом из SMS'}
           </Typography>
 

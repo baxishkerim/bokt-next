@@ -49,6 +49,17 @@ bokt:
   bootstrap:
     # пароль супер-админа при первом старте; если пусто — сгенерируется и попадёт в лог
     super-admin-password: ${BOKT_SUPERADMIN_PASSWORD:admin12345}
+  processing:
+    tranzaxis:
+      # enabled=true включает реальный клиент TranzAxis вместо заглушки
+      enabled: ${BOKT_TX_ENABLED:false}
+      url: ${BOKT_TX_URL:}
+      initiator-rid: ${BOKT_TX_INITIATOR_RID:}
+      processor-inst-id: ${BOKT_TX_PROCESSOR_INST_ID:}
+      originator-id: ${BOKT_TX_ORIGINATOR_ID:}
+      terminal-rid: ${BOKT_TX_TERMINAL_RID:}
+      charge-kind: ${BOKT_TX_CHARGE_KIND:Payment}
+      reverse-kind: ${BOKT_TX_REVERSE_KIND:Payment}
 
 management:
   endpoints:

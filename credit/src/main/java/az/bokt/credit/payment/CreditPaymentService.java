@@ -9,7 +9,6 @@ import az.bokt.credit.processing.ProcessingErrorCode;
 import az.bokt.credit.processing.ProcessingErrorMapper;
 import az.bokt.credit.processing.ProcessingRequest;
 import az.bokt.credit.processing.ProcessingResult;
-import az.bokt.credit.processing.ReversalRequest;
 import az.bokt.tenant.domain.CardType;
 import az.bokt.tenant.domain.OrgCard;
 import az.bokt.tenant.repo.OrgCardRepository;
@@ -20,16 +19,14 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Платёжная цепочка выдачи кредита (валюта — AZN):
- * <ol>
- *   <li>выбираем из пула активную материнскую карту (CHARGE, GUID "CH"+id);</li>
- *   <li>выбираем активную карту выдачи с достаточным остатком лимита (TOPUP, GUID "TP"+id);</li>
- *   <li>уменьшаем остаток карты выдачи; клиент затем снимает наличные с этой карты.</li>
- * </ol>
- * Если TOPUP не прошёл после успешного CHARGE — компенсирующий reversal CHARGE.
- * Лимит проверяется/резервируется ДО процессинга; при отказе транзакция откатывается,
- * возвращая остаток карты. Идемпотентность по GUID (дубликат E010000 = уже выполнено).
- * Остаток материнской карты берётся из процессинга (задел) — здесь пока не списывается.
+ * Выдача кредита (валюта — AZN) — ОДНА операция процессинга (paymentCredit):
+ * списание с материнской карты на карту выдачи, GUID "CH"+id. Клиент затем снимает
+ * наличные с карты выдачи.
+ * <p>
+ * Карта выдачи выбирается из пула (активная, с достаточным остатком лимита, строка
+ * блокируется для конкурентной безопасности), её остаток уменьшается на сумму выдачи.
+ * При отказе процессинга транзакция откатывается — остаток карты возвращается.
+ * Идемпотентность — по GUID (дубликат трактуется как уже выполненная операция).
  */
 @Service
 public class CreditPaymentService {
@@ -52,10 +49,9 @@ public class CreditPaymentService {
         // 1. Материнская карта (источник)
         OrgCard mother = orgCardRepo
                 .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT,
-                        "Нет активной материнской карты"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
 
-        // 2. Карта выдачи с достаточным остатком (строка блокируется для конкурентной безопасности)
+        // 2. Карта выдачи с достаточным остатком (строка блокируется)
         List<OrgCard> payouts = orgCardRepo.findAvailablePayout(amount);
         if (payouts.isEmpty()) {
             throw new BusinessException(ErrorCode.CONFLICT,
@@ -63,70 +59,39 @@ public class CreditPaymentService {
         }
         OrgCard payout = payouts.get(0);
 
-        String chargeGuid = "CH" + credit.getId();
-        String topupGuid = "TP" + credit.getId();
-        credit.setChargeGuid(chargeGuid);
-        credit.setTopupGuid(topupGuid);
-        // карта выдачи фиксируется как карта кредита (клиент снимает с неё)
-        credit.setClientCardPan(payout.getPan());
+        String guid = "CH" + credit.getId();
+        credit.setChargeGuid(guid);
+        credit.setClientCardPan(payout.getPan());   // карта, с которой клиент снимает
 
-        // 3. CHARGE — с материнской
-        ProcessingResult chargeResult = processingClient.charge(new ProcessingRequest(
-                chargeGuid, mother.getPan(), amount, AZN, chargeGuid, "Credit charge #" + credit.getId()));
-        String chargeRrn = switch (chargeResult) {
-            case ProcessingResult.Approved a -> a.rrn();
-            case ProcessingResult.Declined d -> {
-                if (isDuplicate(d)) {
-                    log.warn("CHARGE duplicate for credit {} — уже выполнено", credit.getId());
-                    yield credit.getChargeRrn();
-                }
-                throw declineToException(d, "CHARGE");
-            }
-        };
-        credit.setChargeRrn(chargeRrn);
+        // 3. Одна операция: материнская → карта выдачи
+        ProcessingResult result = processingClient.charge(new ProcessingRequest(
+                guid,
+                mother.getPan(), mother.getExpiry(), null,   // CVV не храним → AuthChecked=true
+                payout.getPan(),
+                amount, 0L, AZN,
+                guid, "Credit #" + credit.getId()));
 
-        // 4. TOPUP — на карту выдачи
-        ProcessingResult topupResult = processingClient.topup(new ProcessingRequest(
-                topupGuid, payout.getPan(), amount, AZN, topupGuid, "Credit topup #" + credit.getId()));
-        switch (topupResult) {
+        switch (result) {
             case ProcessingResult.Approved a -> {
-                credit.setTopupRrn(a.rrn());
-                // резерв лимита карты выдачи
+                credit.setChargeRrn(a.rrn());
                 payout.setBalanceMinor(payout.getBalanceMinor() - amount);
                 orgCardRepo.save(payout);
             }
             case ProcessingResult.Declined d -> {
-                if (isDuplicate(d)) {
-                    log.warn("TOPUP duplicate for credit {} — уже выполнено", credit.getId());
+                if (d.code() == ProcessingErrorCode.DUPLICATE_REFERENCE) {
+                    log.warn("CHARGE duplicate for credit {} — уже выполнено", credit.getId());
+                    payout.setBalanceMinor(payout.getBalanceMinor() - amount);
+                    orgCardRepo.save(payout);
                     return;
                 }
-                compensateCharge(credit, mother);
-                throw declineToException(d, "TOPUP");
+                throw declineToException(d);
             }
         }
     }
 
-    private void compensateCharge(Credit credit, OrgCard mother) {
-        if (credit.getChargeRrn() == null) {
-            return;
-        }
-        try {
-            ProcessingResult r = processingClient.reverse(new ReversalRequest(
-                    credit.getChargeGuid(), credit.getChargeRrn(), credit.getAmountMinor(), AZN));
-            log.info("Compensating reversal of CHARGE for credit {}: {}", credit.getId(), r);
-        } catch (RuntimeException ex) {
-            log.error("Compensating reversal FAILED for credit {} (guid={}, rrn={})",
-                    credit.getId(), credit.getChargeGuid(), credit.getChargeRrn(), ex);
-        }
-    }
-
-    private boolean isDuplicate(ProcessingResult.Declined d) {
-        return d.code() == ProcessingErrorCode.DUPLICATE_REFERENCE;
-    }
-
-    private BusinessException declineToException(ProcessingResult.Declined d, String op) {
+    private BusinessException declineToException(ProcessingResult.Declined d) {
         ErrorCode code = ProcessingErrorMapper.toErrorCode(d.code());
-        String msg = op + " отклонён процессингом: " + code.defaultMessage()
+        String msg = "Выдача отклонена процессингом: " + code.defaultMessage()
                 + (d.rawMessage() == null ? "" : " (" + d.rawMessage() + ")");
         return new BusinessException(code, msg);
     }
