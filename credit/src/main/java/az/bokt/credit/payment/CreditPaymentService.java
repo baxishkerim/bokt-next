@@ -9,7 +9,6 @@ import az.bokt.credit.processing.ProcessingErrorCode;
 import az.bokt.credit.processing.ProcessingErrorMapper;
 import az.bokt.credit.processing.ProcessingRequest;
 import az.bokt.credit.processing.ProcessingResult;
-import az.bokt.tenant.domain.CardType;
 import az.bokt.tenant.domain.OrgCard;
 import az.bokt.tenant.repo.OrgCardRepository;
 import org.slf4j.Logger;
@@ -50,8 +49,8 @@ public class CreditPaymentService {
 
         // Источник — активная материнская карта из пула
         OrgCard mother = orgCardRepo
-                .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
+                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
 
         String guid = "CH" + credit.getId();
         credit.setChargeGuid(guid);

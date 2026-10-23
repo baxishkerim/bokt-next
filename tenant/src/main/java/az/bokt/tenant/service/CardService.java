@@ -14,7 +14,7 @@ import java.math.RoundingMode;
 import java.util.List;
 
 /**
- * Управление картами организации (материнские / выдачи), включая блокировку.
+ * Управление картами организации (источник средств), включая блокировку.
  * Работает в контексте своего тенанта — tenant_id проставляется/фильтруется автоматически.
  */
 @Service
@@ -28,13 +28,12 @@ public class CardService {
 
     @Transactional(readOnly = true)
     public List<OrgCard> list() {
-        return cardRepo.findAllByOrderByTypeAscIdAsc();
+        return cardRepo.findAllByOrderByIdAsc();
     }
 
     @Transactional
     public OrgCard add(CreateCardRequest req) {
         OrgCard card = new OrgCard();
-        card.setType(req.type());
         card.setPan(req.pan().trim());
         card.setExpiry(req.expiry());
         card.setMerchant(req.merchant());

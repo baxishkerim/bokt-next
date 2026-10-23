@@ -94,7 +94,6 @@ function RegisterDialog({ onClose, onCreated }) {
   const [form, setForm] = useState({
     name: '', login: '', frontId: '',
     motherCardPan: '', motherCardExpiry: '', merchant: '',
-    payoutCardPan: '', payoutCardExpiry: '', payoutInitialBalance: '',
     bins: '', headBranchName: 'Head Office',
     directorUsername: '', directorFirstName: '', directorLastName: '', directorPhone: '',
   });
@@ -108,8 +107,6 @@ function RegisterDialog({ onClose, onCreated }) {
         name: form.name, login: form.login, frontId: form.frontId || null,
         motherCardPan: form.motherCardPan, motherCardExpiry: form.motherCardExpiry || null,
         merchant: form.merchant || null,
-        payoutCardPan: form.payoutCardPan, payoutCardExpiry: form.payoutCardExpiry || null,
-        payoutInitialBalance: form.payoutInitialBalance ? Number(form.payoutInitialBalance) : 0,
         bins: form.bins ? form.bins.split(',').map((s) => s.trim()).filter(Boolean) : [],
         headBranchName: form.headBranchName || null,
         directorUsername: form.directorUsername,
@@ -122,7 +119,7 @@ function RegisterDialog({ onClose, onCreated }) {
     finally { setBusy(false); }
   };
 
-  const ready = form.name && form.login && form.motherCardPan && form.payoutCardPan
+  const ready = form.name && form.login && form.motherCardPan
     && form.directorUsername && form.directorPhone;
 
   return (
@@ -138,20 +135,13 @@ function RegisterDialog({ onClose, onCreated }) {
             <TextField label="Front ID" value={form.frontId} onChange={set('frontId')} sx={{ width: 140 }} />
           </Stack>
 
-          <Divider textAlign="left"><Typography variant="caption">Материнская карта (списание)</Typography></Divider>
+          <Divider textAlign="left"><Typography variant="caption">Карта организации (источник средств)</Typography></Divider>
           <Stack direction="row" spacing={2}>
             <TextField label="PAN" value={form.motherCardPan} onChange={set('motherCardPan')} sx={{ flex: 1 }} />
             <TextField label="Срок (MMYY)" value={form.motherCardExpiry} onChange={set('motherCardExpiry')} sx={{ width: 120 }} />
           </Stack>
           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
 
-          <Divider textAlign="left"><Typography variant="caption">Карта выдачи (клиент снимает)</Typography></Divider>
-          <Stack direction="row" spacing={2}>
-            <TextField label="PAN" value={form.payoutCardPan} onChange={set('payoutCardPan')} sx={{ flex: 1 }} />
-            <TextField label="Срок (MMYY)" value={form.payoutCardExpiry} onChange={set('payoutCardExpiry')} sx={{ width: 120 }} />
-          </Stack>
-          <TextField label="Начальный лимит выдачи (AZN)" type="number" value={form.payoutInitialBalance}
-            onChange={set('payoutInitialBalance')} inputProps={{ step: '0.01', min: '0' }} />
 
           <Divider textAlign="left"><Typography variant="caption">Директор (первый пользователь)</Typography></Divider>
           <TextField label="Логин директора" value={form.directorUsername} onChange={set('directorUsername')}

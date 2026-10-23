@@ -13,17 +13,17 @@ import lombok.Setter;
 import org.hibernate.annotations.Filter;
 
 /**
- * Карта организации (BOKT_ORGCARDS). Две группы (пул):
- * MOTHER — источник средств (CHARGE); balanceMinor — задел под остаток из процессинга.
- * PAYOUT — карта выдачи (TOPUP); balanceMinor — доступный лимит, уменьшается при выдаче.
- * Валюта только AZN. Заблокированная карта (status=DISABLED) в платеже не участвует.
+ * Карта организации — источник средств при выдаче кредита (CHARGE).
+ * Пул таких карт; при выдаче выбирается первая активная. Карта клиента (куда садятся деньги)
+ * динамическая и задаётся в самой заявке, в пуле организации не хранится.
+ * balanceMinor — информационный остаток (факт берётся из процессинга через getCard).
+ * Заблокированная карта (status=DISABLED) в выдаче не участвует. Валюта только AZN.
  */
 @Getter
 @Setter
 @Entity
 @Table(name = "org_cards", indexes = {
-        @Index(name = "ix_org_cards_tenant", columnList = "tenant_id"),
-        @Index(name = "ix_org_cards_type", columnList = "type")
+        @Index(name = "ix_org_cards_tenant", columnList = "tenant_id")
 })
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class OrgCard extends TenantAwareEntity {
@@ -33,10 +33,6 @@ public class OrgCard extends TenantAwareEntity {
 
     @Column(length = 8)
     private String expiry;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 16)
-    private CardType type = CardType.MOTHER;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)

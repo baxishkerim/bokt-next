@@ -11,7 +11,6 @@ import az.bokt.common.error.ErrorCode;
 import az.bokt.common.util.HashUtil;
 import az.bokt.notification.service.NotificationService;
 import az.bokt.tenant.domain.Branch;
-import az.bokt.tenant.domain.CardType;
 import az.bokt.tenant.domain.Currency;
 import az.bokt.tenant.domain.OrgBin;
 import az.bokt.tenant.domain.OrgCard;
@@ -30,8 +29,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
@@ -102,27 +99,15 @@ public class OrganisationService {
         oc.setCurrencyId(azn.getId());
         orgCurrencyRepo.save(oc);
 
-        // 3. Материнская карта (источник CHARGE)
-        OrgCard mother = new OrgCard();
-        mother.setTenantId(tenantId);
-        mother.setType(CardType.MOTHER);
-        mother.setPan(req.motherCardPan());
-        mother.setExpiry(req.motherCardExpiry());
-        mother.setMerchant(req.merchant());
-        mother.setStatus(EntityStatus.ACTIVE);
-        mother.setBalanceMinor(0);
-        orgCardRepo.save(mother);
-
-        // 4. Карта выдачи (TOPUP) с начальным лимитом
-        OrgCard payout = new OrgCard();
-        payout.setTenantId(tenantId);
-        payout.setType(CardType.PAYOUT);
-        payout.setPan(req.payoutCardPan());
-        payout.setExpiry(req.payoutCardExpiry());
-        payout.setMerchant(req.merchant());
-        payout.setStatus(EntityStatus.ACTIVE);
-        payout.setBalanceMinor(toMinor(req.payoutInitialBalance()));
-        orgCardRepo.save(payout);
+        // 3. Карта организации — источник средств (CHARGE). Карта клиента задаётся в заявке.
+        OrgCard card = new OrgCard();
+        card.setTenantId(tenantId);
+        card.setPan(req.motherCardPan());
+        card.setExpiry(req.motherCardExpiry());
+        card.setMerchant(req.merchant());
+        card.setStatus(EntityStatus.ACTIVE);
+        card.setBalanceMinor(0);
+        orgCardRepo.save(card);
 
         // 5. BIN-ы
         if (req.bins() != null) {
@@ -264,12 +249,5 @@ public class OrganisationService {
     @Transactional(readOnly = true)
     public List<Branch> listBranches() {
         return branchRepo.findAllByOrderByNameAsc();
-    }
-
-    private long toMinor(BigDecimal amount) {
-        if (amount == null) {
-            return 0;
-        }
-        return amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
     }
 }

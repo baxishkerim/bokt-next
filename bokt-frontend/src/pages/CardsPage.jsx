@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton,
-  MenuItem, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
+  Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
   TableRow, TextField, Tooltip, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -13,11 +13,6 @@ import Mono from '../components/Mono.jsx';
 import { useFeedback } from '../components/Feedback.jsx';
 import { cardsApi } from '../api/cards.js';
 import { errorMessage } from '../api/client.js';
-
-const CARD_TYPES = [
-  { value: 'MOTHER', label: 'Материнская (списание)' },
-  { value: 'PAYOUT', label: 'Выдачи (клиент снимает)' },
-];
 
 export default function CardsPage() {
   const { notify } = useFeedback();
@@ -42,15 +37,15 @@ export default function CardsPage() {
   return (
     <Box>
       <PageHeader title="Карты организации"
-        subtitle="Материнские (источник) и выдачи (клиент снимает наличные). Лимит — остаток карты выдачи."
+        subtitle="Карты-источники средств (с них списывается при выдаче). Карта клиента задаётся в заявке на кредит."
         action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>Добавить карту</Button>} />
 
       <TableContainer component={Paper} variant="outlined">
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>ID</TableCell><TableCell>Тип</TableCell><TableCell>Карта</TableCell>
-              <TableCell>Срок</TableCell><TableCell align="right">Остаток / лимит</TableCell>
+              <TableCell>ID</TableCell><TableCell>Карта</TableCell>
+              <TableCell>Срок</TableCell><TableCell align="right">Остаток</TableCell>
               <TableCell>Статус</TableCell><TableCell align="right">Действия</TableCell>
             </TableRow>
           </TableHead>
@@ -58,10 +53,6 @@ export default function CardsPage() {
             {rows.map((c) => (
               <TableRow key={c.id} hover>
                 <TableCell><Mono>{c.id}</Mono></TableCell>
-                <TableCell>
-                  <Chip size="small" variant="outlined" color={c.type === 'MOTHER' ? 'primary' : 'secondary'}
-                    label={c.type === 'MOTHER' ? 'Материнская' : 'Выдачи'} />
-                </TableCell>
                 <TableCell><Mono>{c.maskedPan}</Mono></TableCell>
                 <TableCell><Mono>{c.expiry || '—'}</Mono></TableCell>
                 <TableCell align="right"><Mono sx={{ fontWeight: 600 }}>{Number(c.balance).toFixed(2)}</Mono></TableCell>
@@ -70,7 +61,7 @@ export default function CardsPage() {
                     label={c.status === 'ACTIVE' ? 'Активна' : 'Заблокирована'} />
                 </TableCell>
                 <TableCell align="right">
-                  <Tooltip title="Изменить остаток/лимит"><IconButton size="small" onClick={() => setBalanceCard(c)}>
+                  <Tooltip title="Изменить остаток"><IconButton size="small" onClick={() => setBalanceCard(c)}>
                     <EditIcon fontSize="small" /></IconButton></Tooltip>
                   {c.status === 'ACTIVE' ? (
                     <Tooltip title="Заблокировать"><IconButton size="small" color="error"
@@ -85,9 +76,9 @@ export default function CardsPage() {
               </TableRow>
             ))}
             {rows.length === 0 && (
-              <TableRow><TableCell colSpan={7}>
+              <TableRow><TableCell colSpan={6}>
                 <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-                  {loading ? 'Загрузка…' : 'Карт нет. Добавьте материнскую и карту выдачи.'}
+                  {loading ? 'Загрузка…' : 'Карт нет. Добавьте карту-источник организации.'}
                 </Typography></TableCell></TableRow>
             )}
           </TableBody>
@@ -108,7 +99,7 @@ export default function CardsPage() {
 
 function AddCardDialog({ onClose, onAdded }) {
   const { notify } = useFeedback();
-  const [form, setForm] = useState({ type: 'MOTHER', pan: '', expiry: '', merchant: '', balance: '' });
+  const [form, setForm] = useState({ pan: '', expiry: '', merchant: '', balance: '' });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -116,7 +107,7 @@ function AddCardDialog({ onClose, onAdded }) {
     setBusy(true);
     try {
       await cardsApi.add({
-        type: form.type, pan: form.pan.trim(), expiry: form.expiry || null,
+        pan: form.pan.trim(), expiry: form.expiry || null,
         merchant: form.merchant || null, balance: form.balance ? Number(form.balance) : 0,
       });
       onAdded();
@@ -126,17 +117,14 @@ function AddCardDialog({ onClose, onAdded }) {
 
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Новая карта</DialogTitle>
+      <DialogTitle>Новая карта организации</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField select label="Тип" value={form.type} onChange={set('type')}>
-            {CARD_TYPES.map((t) => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-          </TextField>
           <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')} />
           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
-          <TextField label={form.type === 'PAYOUT' ? 'Начальный лимит (AZN)' : 'Остаток (AZN, инфо)'}
-            type="number" value={form.balance} onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
+          <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
+            onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -165,9 +153,7 @@ function BalanceDialog({ card, onClose, onSaved }) {
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            {card.type === 'PAYOUT'
-              ? 'Рабочий лимит карты выдачи: сколько ещё можно на неё посадить.'
-              : 'Информационный остаток материнской карты (позже подтянется из процессинга).'}
+            Информационный остаток карты организации (факт подтягивается из процессинга).
           </Typography>
           <TextField label="Остаток (AZN)" type="number" value={balance}
             onChange={(e) => setBalance(e.target.value)} inputProps={{ step: '0.01', min: '0' }} autoFocus />

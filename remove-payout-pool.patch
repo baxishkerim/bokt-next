@@ -1,0 +1,533 @@
+diff --git a/api/src/main/resources/db/migration/V10__drop_card_type.sql b/api/src/main/resources/db/migration/V10__drop_card_type.sql
+new file mode 100644
+index 0000000..270cc91
+--- /dev/null
++++ b/api/src/main/resources/db/migration/V10__drop_card_type.sql
+@@ -0,0 +1,5 @@
++-- Карты выдачи больше не хранятся в пуле организации: карта клиента задаётся в заявке.
++-- Удаляем карты типа PAYOUT и колонку type (остаётся только карта-источник организации).
++delete from org_cards where type = 'PAYOUT';
++drop index if exists ix_org_cards_type;
++alter table org_cards drop column if exists type;
+diff --git a/bokt-frontend/src/pages/CardsPage.jsx b/bokt-frontend/src/pages/CardsPage.jsx
+index a56b670..9d74ff2 100644
+--- a/bokt-frontend/src/pages/CardsPage.jsx
++++ b/bokt-frontend/src/pages/CardsPage.jsx
+@@ -1,7 +1,7 @@
+ import { useCallback, useEffect, useState } from 'react';
+ import {
+   Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton,
+-  MenuItem, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
++  Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
+   TableRow, TextField, Tooltip, Typography,
+ } from '@mui/material';
+ import AddIcon from '@mui/icons-material/Add';
+@@ -14,11 +14,6 @@ import { useFeedback } from '../components/Feedback.jsx';
+ import { cardsApi } from '../api/cards.js';
+ import { errorMessage } from '../api/client.js';
+ 
+-const CARD_TYPES = [
+-  { value: 'MOTHER', label: 'Материнская (списание)' },
+-  { value: 'PAYOUT', label: 'Выдачи (клиент снимает)' },
+-];
+-
+ export default function CardsPage() {
+   const { notify } = useFeedback();
+   const [rows, setRows] = useState([]);
+@@ -42,15 +37,15 @@ export default function CardsPage() {
+   return (
+     <Box>
+       <PageHeader title="Карты организации"
+-        subtitle="Материнские (источник) и выдачи (клиент снимает наличные). Лимит — остаток карты выдачи."
++        subtitle="Карты-источники средств (с них списывается при выдаче). Карта клиента задаётся в заявке на кредит."
+         action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>Добавить карту</Button>} />
+ 
+       <TableContainer component={Paper} variant="outlined">
+         <Table size="small">
+           <TableHead>
+             <TableRow>
+-              <TableCell>ID</TableCell><TableCell>Тип</TableCell><TableCell>Карта</TableCell>
+-              <TableCell>Срок</TableCell><TableCell align="right">Остаток / лимит</TableCell>
++              <TableCell>ID</TableCell><TableCell>Карта</TableCell>
++              <TableCell>Срок</TableCell><TableCell align="right">Остаток</TableCell>
+               <TableCell>Статус</TableCell><TableCell align="right">Действия</TableCell>
+             </TableRow>
+           </TableHead>
+@@ -58,10 +53,6 @@ export default function CardsPage() {
+             {rows.map((c) => (
+               <TableRow key={c.id} hover>
+                 <TableCell><Mono>{c.id}</Mono></TableCell>
+-                <TableCell>
+-                  <Chip size="small" variant="outlined" color={c.type === 'MOTHER' ? 'primary' : 'secondary'}
+-                    label={c.type === 'MOTHER' ? 'Материнская' : 'Выдачи'} />
+-                </TableCell>
+                 <TableCell><Mono>{c.maskedPan}</Mono></TableCell>
+                 <TableCell><Mono>{c.expiry || '—'}</Mono></TableCell>
+                 <TableCell align="right"><Mono sx={{ fontWeight: 600 }}>{Number(c.balance).toFixed(2)}</Mono></TableCell>
+@@ -70,7 +61,7 @@ export default function CardsPage() {
+                     label={c.status === 'ACTIVE' ? 'Активна' : 'Заблокирована'} />
+                 </TableCell>
+                 <TableCell align="right">
+-                  <Tooltip title="Изменить остаток/лимит"><IconButton size="small" onClick={() => setBalanceCard(c)}>
++                  <Tooltip title="Изменить остаток"><IconButton size="small" onClick={() => setBalanceCard(c)}>
+                     <EditIcon fontSize="small" /></IconButton></Tooltip>
+                   {c.status === 'ACTIVE' ? (
+                     <Tooltip title="Заблокировать"><IconButton size="small" color="error"
+@@ -85,9 +76,9 @@ export default function CardsPage() {
+               </TableRow>
+             ))}
+             {rows.length === 0 && (
+-              <TableRow><TableCell colSpan={7}>
++              <TableRow><TableCell colSpan={6}>
+                 <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+-                  {loading ? 'Загрузка…' : 'Карт нет. Добавьте материнскую и карту выдачи.'}
++                  {loading ? 'Загрузка…' : 'Карт нет. Добавьте карту-источник организации.'}
+                 </Typography></TableCell></TableRow>
+             )}
+           </TableBody>
+@@ -108,7 +99,7 @@ export default function CardsPage() {
+ 
+ function AddCardDialog({ onClose, onAdded }) {
+   const { notify } = useFeedback();
+-  const [form, setForm] = useState({ type: 'MOTHER', pan: '', expiry: '', merchant: '', balance: '' });
++  const [form, setForm] = useState({ pan: '', expiry: '', merchant: '', balance: '' });
+   const [busy, setBusy] = useState(false);
+   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+ 
+@@ -116,7 +107,7 @@ function AddCardDialog({ onClose, onAdded }) {
+     setBusy(true);
+     try {
+       await cardsApi.add({
+-        type: form.type, pan: form.pan.trim(), expiry: form.expiry || null,
++        pan: form.pan.trim(), expiry: form.expiry || null,
+         merchant: form.merchant || null, balance: form.balance ? Number(form.balance) : 0,
+       });
+       onAdded();
+@@ -126,17 +117,14 @@ function AddCardDialog({ onClose, onAdded }) {
+ 
+   return (
+     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
+-      <DialogTitle>Новая карта</DialogTitle>
++      <DialogTitle>Новая карта организации</DialogTitle>
+       <DialogContent>
+         <Stack spacing={2} sx={{ mt: 1 }}>
+-          <TextField select label="Тип" value={form.type} onChange={set('type')}>
+-            {CARD_TYPES.map((t) => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
+-          </TextField>
+           <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')} />
+           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
+           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
+-          <TextField label={form.type === 'PAYOUT' ? 'Начальный лимит (AZN)' : 'Остаток (AZN, инфо)'}
+-            type="number" value={form.balance} onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
++          <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
++            onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
+         </Stack>
+       </DialogContent>
+       <DialogActions>
+@@ -165,9 +153,7 @@ function BalanceDialog({ card, onClose, onSaved }) {
+       <DialogContent>
+         <Stack spacing={2} sx={{ mt: 1 }}>
+           <Typography variant="body2" color="text.secondary">
+-            {card.type === 'PAYOUT'
+-              ? 'Рабочий лимит карты выдачи: сколько ещё можно на неё посадить.'
+-              : 'Информационный остаток материнской карты (позже подтянется из процессинга).'}
++            Информационный остаток карты организации (факт подтягивается из процессинга).
+           </Typography>
+           <TextField label="Остаток (AZN)" type="number" value={balance}
+             onChange={(e) => setBalance(e.target.value)} inputProps={{ step: '0.01', min: '0' }} autoFocus />
+diff --git a/bokt-frontend/src/pages/OrganisationsPage.jsx b/bokt-frontend/src/pages/OrganisationsPage.jsx
+index 6877ce9..94ff794 100644
+--- a/bokt-frontend/src/pages/OrganisationsPage.jsx
++++ b/bokt-frontend/src/pages/OrganisationsPage.jsx
+@@ -94,7 +94,6 @@ function RegisterDialog({ onClose, onCreated }) {
+   const [form, setForm] = useState({
+     name: '', login: '', frontId: '',
+     motherCardPan: '', motherCardExpiry: '', merchant: '',
+-    payoutCardPan: '', payoutCardExpiry: '', payoutInitialBalance: '',
+     bins: '', headBranchName: 'Head Office',
+     directorUsername: '', directorFirstName: '', directorLastName: '', directorPhone: '',
+   });
+@@ -108,8 +107,6 @@ function RegisterDialog({ onClose, onCreated }) {
+         name: form.name, login: form.login, frontId: form.frontId || null,
+         motherCardPan: form.motherCardPan, motherCardExpiry: form.motherCardExpiry || null,
+         merchant: form.merchant || null,
+-        payoutCardPan: form.payoutCardPan, payoutCardExpiry: form.payoutCardExpiry || null,
+-        payoutInitialBalance: form.payoutInitialBalance ? Number(form.payoutInitialBalance) : 0,
+         bins: form.bins ? form.bins.split(',').map((s) => s.trim()).filter(Boolean) : [],
+         headBranchName: form.headBranchName || null,
+         directorUsername: form.directorUsername,
+@@ -122,7 +119,7 @@ function RegisterDialog({ onClose, onCreated }) {
+     finally { setBusy(false); }
+   };
+ 
+-  const ready = form.name && form.login && form.motherCardPan && form.payoutCardPan
++  const ready = form.name && form.login && form.motherCardPan
+     && form.directorUsername && form.directorPhone;
+ 
+   return (
+@@ -138,20 +135,13 @@ function RegisterDialog({ onClose, onCreated }) {
+             <TextField label="Front ID" value={form.frontId} onChange={set('frontId')} sx={{ width: 140 }} />
+           </Stack>
+ 
+-          <Divider textAlign="left"><Typography variant="caption">Материнская карта (списание)</Typography></Divider>
++          <Divider textAlign="left"><Typography variant="caption">Карта организации (источник средств)</Typography></Divider>
+           <Stack direction="row" spacing={2}>
+             <TextField label="PAN" value={form.motherCardPan} onChange={set('motherCardPan')} sx={{ flex: 1 }} />
+             <TextField label="Срок (MMYY)" value={form.motherCardExpiry} onChange={set('motherCardExpiry')} sx={{ width: 120 }} />
+           </Stack>
+           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
+ 
+-          <Divider textAlign="left"><Typography variant="caption">Карта выдачи (клиент снимает)</Typography></Divider>
+-          <Stack direction="row" spacing={2}>
+-            <TextField label="PAN" value={form.payoutCardPan} onChange={set('payoutCardPan')} sx={{ flex: 1 }} />
+-            <TextField label="Срок (MMYY)" value={form.payoutCardExpiry} onChange={set('payoutCardExpiry')} sx={{ width: 120 }} />
+-          </Stack>
+-          <TextField label="Начальный лимит выдачи (AZN)" type="number" value={form.payoutInitialBalance}
+-            onChange={set('payoutInitialBalance')} inputProps={{ step: '0.01', min: '0' }} />
+ 
+           <Divider textAlign="left"><Typography variant="caption">Директор (первый пользователь)</Typography></Divider>
+           <TextField label="Логин директора" value={form.directorUsername} onChange={set('directorUsername')}
+diff --git a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+index 0302775..edf316f 100644
+--- a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
++++ b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+@@ -9,7 +9,6 @@ import az.bokt.credit.processing.ProcessingErrorCode;
+ import az.bokt.credit.processing.ProcessingErrorMapper;
+ import az.bokt.credit.processing.ProcessingRequest;
+ import az.bokt.credit.processing.ProcessingResult;
+-import az.bokt.tenant.domain.CardType;
+ import az.bokt.tenant.domain.OrgCard;
+ import az.bokt.tenant.repo.OrgCardRepository;
+ import org.slf4j.Logger;
+@@ -50,8 +49,8 @@ public class CreditPaymentService {
+ 
+         // Источник — активная материнская карта из пула
+         OrgCard mother = orgCardRepo
+-                .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
+-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
++                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
++                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
+ 
+         String guid = "CH" + credit.getId();
+         credit.setChargeGuid(guid);
+diff --git a/credit/src/main/java/az/bokt/credit/payment/ReversalService.java b/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
+index aeac8ef..09ef6b7 100644
+--- a/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
++++ b/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
+@@ -10,7 +10,6 @@ import az.bokt.credit.processing.ProcessingErrorMapper;
+ import az.bokt.credit.processing.ProcessingResult;
+ import az.bokt.credit.processing.ReversalRequest;
+ import az.bokt.credit.repo.CreditRepository;
+-import az.bokt.tenant.domain.CardType;
+ import az.bokt.tenant.domain.Currency;
+ import az.bokt.tenant.domain.OrgCard;
+ import az.bokt.tenant.repo.CurrencyRepository;
+@@ -68,8 +67,8 @@ public class ReversalService {
+                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Валюта кредита не найдена"));
+ 
+         OrgCard mother = orgCardRepo
+-                .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
+-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
++                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
++                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
+ 
+         ProcessingResult result = processingClient.reverse(new ReversalRequest(
+                 credit.getChargeGuid(), credit.getChargeRrn(), mother.getPan(), reverseAmount, currency.getCode()));
+diff --git a/tenant/src/main/java/az/bokt/tenant/domain/CardType.java b/tenant/src/main/java/az/bokt/tenant/domain/CardType.java
+deleted file mode 100644
+index 504ee03..0000000
+--- a/tenant/src/main/java/az/bokt/tenant/domain/CardType.java
++++ /dev/null
+@@ -1,14 +0,0 @@
+-package az.bokt.tenant.domain;
+-
+-/**
+- * Назначение карты организации:
+- * <ul>
+- *   <li>{@code MOTHER} — материнская, с неё списываются средства (CHARGE);</li>
+- *   <li>{@code PAYOUT} — карта выдачи, на неё сажают деньги (TOPUP), клиент снимает наличные.</li>
+- * </ul>
+- * Обоих типов может быть несколько (пул карт).
+- */
+-public enum CardType {
+-    MOTHER,
+-    PAYOUT
+-}
+diff --git a/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java b/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
+index 61ca550..0ecb504 100644
+--- a/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
++++ b/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
+@@ -13,17 +13,17 @@ import lombok.Setter;
+ import org.hibernate.annotations.Filter;
+ 
+ /**
+- * Карта организации (BOKT_ORGCARDS). Две группы (пул):
+- * MOTHER — источник средств (CHARGE); balanceMinor — задел под остаток из процессинга.
+- * PAYOUT — карта выдачи (TOPUP); balanceMinor — доступный лимит, уменьшается при выдаче.
+- * Валюта только AZN. Заблокированная карта (status=DISABLED) в платеже не участвует.
++ * Карта организации — источник средств при выдаче кредита (CHARGE).
++ * Пул таких карт; при выдаче выбирается первая активная. Карта клиента (куда садятся деньги)
++ * динамическая и задаётся в самой заявке, в пуле организации не хранится.
++ * balanceMinor — информационный остаток (факт берётся из процессинга через getCard).
++ * Заблокированная карта (status=DISABLED) в выдаче не участвует. Валюта только AZN.
+  */
+ @Getter
+ @Setter
+ @Entity
+ @Table(name = "org_cards", indexes = {
+-        @Index(name = "ix_org_cards_tenant", columnList = "tenant_id"),
+-        @Index(name = "ix_org_cards_type", columnList = "type")
++        @Index(name = "ix_org_cards_tenant", columnList = "tenant_id")
+ })
+ @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+ public class OrgCard extends TenantAwareEntity {
+@@ -34,10 +34,6 @@ public class OrgCard extends TenantAwareEntity {
+     @Column(length = 8)
+     private String expiry;
+ 
+-    @Enumerated(EnumType.STRING)
+-    @Column(nullable = false, length = 16)
+-    private CardType type = CardType.MOTHER;
+-
+     @Enumerated(EnumType.STRING)
+     @Column(nullable = false, length = 16)
+     private EntityStatus status = EntityStatus.ACTIVE;
+diff --git a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+index 9c4b672..58e45ef 100644
+--- a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
++++ b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+@@ -1,17 +1,14 @@
+ package az.bokt.tenant.dto;
+ 
+-import az.bokt.tenant.domain.CardType;
+ import jakarta.validation.constraints.NotBlank;
+-import jakarta.validation.constraints.NotNull;
+ 
+ import java.math.BigDecimal;
+ 
+ /**
+- * Добавление карты организации. balance — начальный остаток/лимит (в основных единицах):
+- * для PAYOUT это рабочий лимит выдачи, для MOTHER — информационный остаток (пока задел).
++ * Добавление карты организации (источник средств). balance — информационный остаток
++ * в основных единицах (факт берётся из процессинга).
+  */
+ public record CreateCardRequest(
+-        @NotNull CardType type,
+         @NotBlank String pan,
+         String expiry,
+         String merchant,
+diff --git a/tenant/src/main/java/az/bokt/tenant/dto/OrgCardResponse.java b/tenant/src/main/java/az/bokt/tenant/dto/OrgCardResponse.java
+index c7d9e41..8774869 100644
+--- a/tenant/src/main/java/az/bokt/tenant/dto/OrgCardResponse.java
++++ b/tenant/src/main/java/az/bokt/tenant/dto/OrgCardResponse.java
+@@ -1,24 +1,22 @@
+ package az.bokt.tenant.dto;
+ 
+ import az.bokt.common.domain.EntityStatus;
+-import az.bokt.tenant.domain.CardType;
+ import az.bokt.tenant.domain.OrgCard;
+ 
+ import java.math.BigDecimal;
+ 
+-/** Карта организации с маскированным PAN и остатком лимита (в основных единицах). */
++/** Карта организации с маскированным PAN и остатком (в основных единицах). */
+ public record OrgCardResponse(
+         Long id,
+         String maskedPan,
+         String expiry,
+-        CardType type,
+         EntityStatus status,
+         BigDecimal balance,
+         String merchant
+ ) {
+     public static OrgCardResponse from(OrgCard c) {
+         return new OrgCardResponse(
+-                c.getId(), mask(c.getPan()), c.getExpiry(), c.getType(), c.getStatus(),
++                c.getId(), mask(c.getPan()), c.getExpiry(), c.getStatus(),
+                 BigDecimal.valueOf(c.getBalanceMinor()).movePointLeft(2), c.getMerchant());
+     }
+ 
+diff --git a/tenant/src/main/java/az/bokt/tenant/dto/RegisterOrganisationRequest.java b/tenant/src/main/java/az/bokt/tenant/dto/RegisterOrganisationRequest.java
+index 5ca6c48..e51e212 100644
+--- a/tenant/src/main/java/az/bokt/tenant/dto/RegisterOrganisationRequest.java
++++ b/tenant/src/main/java/az/bokt/tenant/dto/RegisterOrganisationRequest.java
+@@ -2,31 +2,25 @@ package az.bokt.tenant.dto;
+ 
+ import jakarta.validation.constraints.NotBlank;
+ 
+-import java.math.BigDecimal;
+ import java.util.List;
+ 
+ /**
+  * Регистрация новой NBCO супер-админом. За одну транзакцию создаётся:
+- * организация, валюта AZN, материнская карта, карта выдачи, BIN-ы, головной филиал,
+- * 5 ролей (director/branch_manager/operator/moderator) и первый пользователь — ДИРЕКТОР,
+- * которому уходят учётные данные по SMS. Дальше директор сам управляет своей организацией.
+- * Валюта системы — только AZN, поэтому в запросе не указывается.
++ * организация, валюта AZN, карта организации (источник средств), BIN-ы, головной филиал,
++ * роли (director/moderator/operator) и первый пользователь — ДИРЕКТОР, которому уходят
++ * учётные данные по SMS. Карта клиента (куда садятся деньги) задаётся в самой заявке на кредит.
++ * Валюта системы — только AZN.
+  */
+ public record RegisterOrganisationRequest(
+         @NotBlank String name,
+         @NotBlank String login,
+         String frontId,
+ 
+-        // Материнская карта (источник, CHARGE)
++        // Карта организации (источник средств, CHARGE)
+         @NotBlank String motherCardPan,
+         String motherCardExpiry,
+         String merchant,
+ 
+-        // Карта выдачи (TOPUP, клиент снимает наличные)
+-        @NotBlank String payoutCardPan,
+-        String payoutCardExpiry,
+-        BigDecimal payoutInitialBalance,
+-
+         // BIN-ы клиентских карт (опционально)
+         List<String> bins,
+ 
+diff --git a/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java b/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
+index 7a20476..fdeb3b5 100644
+--- a/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
++++ b/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
+@@ -1,37 +1,16 @@
+ package az.bokt.tenant.repo;
+ 
+ import az.bokt.common.domain.EntityStatus;
+-import az.bokt.tenant.domain.CardType;
+ import az.bokt.tenant.domain.OrgCard;
+-import jakarta.persistence.LockModeType;
+ import org.springframework.data.jpa.repository.JpaRepository;
+-import org.springframework.data.jpa.repository.Lock;
+-import org.springframework.data.jpa.repository.Query;
+-import org.springframework.data.repository.query.Param;
+ 
+ import java.util.List;
+ import java.util.Optional;
+ 
+ public interface OrgCardRepository extends JpaRepository<OrgCard, Long> {
+ 
+-    List<OrgCard> findAllByOrderByTypeAscIdAsc();
++    List<OrgCard> findAllByOrderByIdAsc();
+ 
+-    List<OrgCard> findByTypeAndStatus(CardType type, EntityStatus status);
+-
+-    /** Первая активная материнская карта (источник CHARGE). */
+-    Optional<OrgCard> findFirstByTypeAndStatusOrderByIdAsc(CardType type, EntityStatus status);
+-
+-    /**
+-     * Активная карта выдачи с достаточным остатком лимита — с пессимистичной блокировкой строки,
+-     * чтобы два параллельных подтверждения не пробили лимит одной карты.
+-     */
+-    @Lock(LockModeType.PESSIMISTIC_WRITE)
+-    @Query("""
+-            select c from OrgCard c
+-            where c.type = az.bokt.tenant.domain.CardType.PAYOUT
+-              and c.status = az.bokt.common.domain.EntityStatus.ACTIVE
+-              and c.balanceMinor >= :amountMinor
+-            order by c.id asc
+-            """)
+-    List<OrgCard> findAvailablePayout(@Param("amountMinor") long amountMinor);
++    /** Первая активная карта организации — источник CHARGE при выдаче. */
++    Optional<OrgCard> findFirstByStatusOrderByIdAsc(EntityStatus status);
+ }
+diff --git a/tenant/src/main/java/az/bokt/tenant/service/CardService.java b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+index 171ab67..865b6cb 100644
+--- a/tenant/src/main/java/az/bokt/tenant/service/CardService.java
++++ b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+@@ -14,7 +14,7 @@ import java.math.RoundingMode;
+ import java.util.List;
+ 
+ /**
+- * Управление картами организации (материнские / выдачи), включая блокировку.
++ * Управление картами организации (источник средств), включая блокировку.
+  * Работает в контексте своего тенанта — tenant_id проставляется/фильтруется автоматически.
+  */
+ @Service
+@@ -28,13 +28,12 @@ public class CardService {
+ 
+     @Transactional(readOnly = true)
+     public List<OrgCard> list() {
+-        return cardRepo.findAllByOrderByTypeAscIdAsc();
++        return cardRepo.findAllByOrderByIdAsc();
+     }
+ 
+     @Transactional
+     public OrgCard add(CreateCardRequest req) {
+         OrgCard card = new OrgCard();
+-        card.setType(req.type());
+         card.setPan(req.pan().trim());
+         card.setExpiry(req.expiry());
+         card.setMerchant(req.merchant());
+diff --git a/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java b/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
+index a8e5e9c..9ace364 100644
+--- a/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
++++ b/tenant/src/main/java/az/bokt/tenant/service/OrganisationService.java
+@@ -11,7 +11,6 @@ import az.bokt.common.error.ErrorCode;
+ import az.bokt.common.util.HashUtil;
+ import az.bokt.notification.service.NotificationService;
+ import az.bokt.tenant.domain.Branch;
+-import az.bokt.tenant.domain.CardType;
+ import az.bokt.tenant.domain.Currency;
+ import az.bokt.tenant.domain.OrgBin;
+ import az.bokt.tenant.domain.OrgCard;
+@@ -30,8 +29,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
+ import org.springframework.stereotype.Service;
+ import org.springframework.transaction.annotation.Transactional;
+ 
+-import java.math.BigDecimal;
+-import java.math.RoundingMode;
+ import java.time.LocalDate;
+ import java.util.List;
+ import java.util.Set;
+@@ -102,27 +99,15 @@ public class OrganisationService {
+         oc.setCurrencyId(azn.getId());
+         orgCurrencyRepo.save(oc);
+ 
+-        // 3. Материнская карта (источник CHARGE)
+-        OrgCard mother = new OrgCard();
+-        mother.setTenantId(tenantId);
+-        mother.setType(CardType.MOTHER);
+-        mother.setPan(req.motherCardPan());
+-        mother.setExpiry(req.motherCardExpiry());
+-        mother.setMerchant(req.merchant());
+-        mother.setStatus(EntityStatus.ACTIVE);
+-        mother.setBalanceMinor(0);
+-        orgCardRepo.save(mother);
+-
+-        // 4. Карта выдачи (TOPUP) с начальным лимитом
+-        OrgCard payout = new OrgCard();
+-        payout.setTenantId(tenantId);
+-        payout.setType(CardType.PAYOUT);
+-        payout.setPan(req.payoutCardPan());
+-        payout.setExpiry(req.payoutCardExpiry());
+-        payout.setMerchant(req.merchant());
+-        payout.setStatus(EntityStatus.ACTIVE);
+-        payout.setBalanceMinor(toMinor(req.payoutInitialBalance()));
+-        orgCardRepo.save(payout);
++        // 3. Карта организации — источник средств (CHARGE). Карта клиента задаётся в заявке.
++        OrgCard card = new OrgCard();
++        card.setTenantId(tenantId);
++        card.setPan(req.motherCardPan());
++        card.setExpiry(req.motherCardExpiry());
++        card.setMerchant(req.merchant());
++        card.setStatus(EntityStatus.ACTIVE);
++        card.setBalanceMinor(0);
++        orgCardRepo.save(card);
+ 
+         // 5. BIN-ы
+         if (req.bins() != null) {
+@@ -265,11 +250,4 @@ public class OrganisationService {
+     public List<Branch> listBranches() {
+         return branchRepo.findAllByOrderByNameAsc();
+     }
+-
+-    private long toMinor(BigDecimal amount) {
+-        if (amount == null) {
+-            return 0;
+-        }
+-        return amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
+-    }
+ }
