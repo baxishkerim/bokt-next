@@ -16,16 +16,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
 /**
  * Выдача кредита (валюта — AZN) — ОДНА операция процессинга (paymentCredit):
- * списание с материнской карты на карту выдачи, GUID "CH"+id. Клиент затем снимает
- * наличные с карты выдачи.
+ * списание с материнской карты организации на карту клиента, GUID "CH"+id.
  * <p>
- * Карта выдачи выбирается из пула (активная, с достаточным остатком лимита, строка
- * блокируется для конкурентной безопасности), её остаток уменьшается на сумму выдачи.
- * При отказе процессинга транзакция откатывается — остаток карты возвращается.
+ * Карта клиента (карта выдачи) — динамическая: её PAN вводит оператор при создании заявки
+ * ({@code credit.clientCardPan}), а не берётся из пула. Все деньги садятся на эту одну карту;
+ * клиент затем снимает с неё наличные. Источник (материнская карта) выбирается из пула
+ * активных карт типа MOTHER.
  * Идемпотентность — по GUID (дубликат трактуется как уже выполненная операция).
  */
 @Service
@@ -42,46 +40,35 @@ public class CreditPaymentService {
         this.orgCardRepo = orgCardRepo;
     }
 
-    /** Провести выдачу. Мутирует credit (GUID/RRN) и остаток карты выдачи. Бросает при отказе. */
+    /** Провести выдачу. Мутирует credit (GUID/RRN). Бросает при отказе. */
     public void settle(Credit credit) {
         long amount = credit.getAmountMinor();
 
-        // 1. Материнская карта (источник)
+        if (credit.getClientCardPan() == null || credit.getClientCardPan().isBlank()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "Не указана карта клиента для выдачи");
+        }
+
+        // Источник — активная материнская карта из пула
         OrgCard mother = orgCardRepo
                 .findFirstByTypeAndStatusOrderByIdAsc(CardType.MOTHER, EntityStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной материнской карты"));
 
-        // 2. Карта выдачи с достаточным остатком (строка блокируется)
-        List<OrgCard> payouts = orgCardRepo.findAvailablePayout(amount);
-        if (payouts.isEmpty()) {
-            throw new BusinessException(ErrorCode.CONFLICT,
-                    "Нет активной карты выдачи с достаточным остатком лимита");
-        }
-        OrgCard payout = payouts.get(0);
-
         String guid = "CH" + credit.getId();
         credit.setChargeGuid(guid);
-        credit.setClientCardPan(payout.getPan());   // карта, с которой клиент снимает
 
-        // 3. Одна операция: материнская → карта выдачи
+        // Одна операция: материнская карта → карта клиента
         ProcessingResult result = processingClient.charge(new ProcessingRequest(
                 guid,
                 mother.getPan(), mother.getExpiry(), null,   // CVV не храним → AuthChecked=true
-                payout.getPan(),
+                credit.getClientCardPan(),
                 amount, 0L, AZN,
                 guid, "Credit #" + credit.getId()));
 
         switch (result) {
-            case ProcessingResult.Approved a -> {
-                credit.setChargeRrn(a.rrn());
-                payout.setBalanceMinor(payout.getBalanceMinor() - amount);
-                orgCardRepo.save(payout);
-            }
+            case ProcessingResult.Approved a -> credit.setChargeRrn(a.rrn());
             case ProcessingResult.Declined d -> {
                 if (d.code() == ProcessingErrorCode.DUPLICATE_REFERENCE) {
                     log.warn("CHARGE duplicate for credit {} — уже выполнено", credit.getId());
-                    payout.setBalanceMinor(payout.getBalanceMinor() - amount);
-                    orgCardRepo.save(payout);
                     return;
                 }
                 throw declineToException(d);

@@ -58,6 +58,7 @@ public class CreditService {
 
         Credit credit = new Credit();
         credit.setClientId(client.getId());
+        credit.setClientCardPan(req.clientCardPan());
         credit.setAmountMinor(Money.toMinor(req.amount()));
         credit.setCurrencyId(req.currencyId());
         credit.setBranchId(CurrentUser.branchId());   // филиал оператора
