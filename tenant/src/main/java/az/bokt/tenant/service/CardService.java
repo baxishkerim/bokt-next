@@ -3,6 +3,7 @@ package az.bokt.tenant.service;
 import az.bokt.common.domain.EntityStatus;
 import az.bokt.common.error.BusinessException;
 import az.bokt.common.error.ErrorCode;
+import az.bokt.common.tenant.TenantContext;
 import az.bokt.tenant.domain.OrgCard;
 import az.bokt.tenant.dto.CreateCardRequest;
 import az.bokt.tenant.repo.OrgCardRepository;
@@ -33,7 +34,14 @@ public class CardService {
 
     @Transactional
     public OrgCard add(CreateCardRequest req) {
+        Long tenantId = TenantContext.getTenantId();
+        if (tenantId == null) {
+            // Супер-админ платформы не привязан к организации — картами управляет директор.
+            throw new BusinessException(ErrorCode.ACCESS_DENIED,
+                    "Управление картами доступно пользователю организации (директору), а не супер-админу платформы");
+        }
         OrgCard card = new OrgCard();
+        card.setTenantId(tenantId);
         card.setPan(req.pan().trim());
         card.setExpiry(req.expiry());
         card.setMerchant(req.merchant());

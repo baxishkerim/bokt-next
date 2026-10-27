@@ -52,7 +52,7 @@ bokt:
   processing:
     tranzaxis:
       # enabled=true включает реальный клиент TranzAxis вместо заглушки
-      enabled: ${BOKT_TX_ENABLED:false}
+      enabled: ${BOKT_TX_ENABLED:true}
       url: ${BOKT_TX_URL:}
       initiator-rid: ${BOKT_TX_INITIATOR_RID:}
       processor-inst-id: ${BOKT_TX_PROCESSOR_INST_ID:}

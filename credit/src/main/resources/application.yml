@@ -1,0 +1,9 @@
+bokt:
+  tx:
+    enabled: true
+    url: "http://10.21.20.30:20000/?WSDL"
+    initiator-rid: "Azerpoct"
+    processor-inst-id: "22"
+    originator-id: "22"
+    charge-kind: "<значение Kind для выдачи>"
+    reverse-kind: "<значение Kind для реверса>"
