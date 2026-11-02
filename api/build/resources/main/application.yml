@@ -51,15 +51,14 @@ bokt:
     super-admin-password: ${BOKT_SUPERADMIN_PASSWORD:admin12345}
   processing:
     tranzaxis:
-      # enabled=true включает реальный клиент TranzAxis вместо заглушки
-      enabled: ${BOKT_TX_ENABLED:true}
-      url: ${BOKT_TX_URL:}
-      initiator-rid: ${BOKT_TX_INITIATOR_RID:}
-      processor-inst-id: ${BOKT_TX_PROCESSOR_INST_ID:}
-      originator-id: ${BOKT_TX_ORIGINATOR_ID:}
-      terminal-rid: ${BOKT_TX_TERMINAL_RID:}
-      charge-kind: ${BOKT_TX_CHARGE_KIND:Payment}
-      reverse-kind: ${BOKT_TX_REVERSE_KIND:Payment}
+      enabled: true
+      url: "http://10.21.20.30:20000/"      # endpoint без ?WSDL (как в старом сервисе)
+      initiator-rid: "Azerpoct"
+      processor-inst-id: "22"
+      originator-id: "22"
+      terminal-rid: "<Rid терминала>"        # ← обязательно, был пропущен
+      charge-kind: "Payment"
+      reverse-kind: "Payment"
 
 management:
   endpoints:

@@ -1,6 +1,5 @@
 package az.bokt.credit.payment;
 
-import az.bokt.common.domain.EntityStatus;
 import az.bokt.common.error.BusinessException;
 import az.bokt.common.error.ErrorCode;
 import az.bokt.credit.domain.Credit;
@@ -19,10 +18,9 @@ import org.springframework.stereotype.Service;
  * Выдача кредита (валюта — AZN) — ОДНА операция процессинга (paymentCredit):
  * списание с материнской карты организации на карту клиента, GUID "CH"+id.
  * <p>
- * Карта клиента (карта выдачи) — динамическая: её PAN вводит оператор при создании заявки
- * ({@code credit.clientCardPan}), а не берётся из пула. Все деньги садятся на эту одну карту;
- * клиент затем снимает с неё наличные. Источник (материнская карта) выбирается из пула
- * активных карт типа MOTHER.
+ * Карта клиента (карта выдачи) — динамическая: её PAN и срок вводит оператор при создании заявки
+ * ({@code credit.clientCardPan}/{@code clientCardExpiry}). Все деньги садятся на эту одну карту;
+ * клиент затем снимает с неё наличные. Источник — единственная материнская карта организации.
  * Идемпотентность — по GUID (дубликат трактуется как уже выполненная операция).
  */
 @Service
@@ -47,20 +45,23 @@ public class CreditPaymentService {
             throw new BusinessException(ErrorCode.CONFLICT, "Не указана карта клиента для выдачи");
         }
 
-        // Источник — активная материнская карта из пула
-        OrgCard mother = orgCardRepo
-                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
+        // Источник — единственная материнская карта организации
+        OrgCard mother = orgCardRepo.findFirstByOrderByIdAsc()
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "У организации не задана материнская карта"));
+        if (!mother.isActive()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "Материнская карта организации заблокирована");
+        }
 
         String guid = "CH" + credit.getId();
         credit.setChargeGuid(guid);
 
-        // Одна операция: материнская карта → карта клиента
+        // Одна операция: материнская карта → карта клиента (PAN + срок)
         ProcessingResult result = processingClient.charge(new ProcessingRequest(
                 guid,
-                mother.getPan(), mother.getExpiry(), null,   // CVV не храним → AuthChecked=true
+                mother.getPan(),
                 credit.getClientCardPan(),
-                amount, 0L, AZN,
+                credit.getClientCardExpiry(),
+                amount, AZN,
                 guid, "Credit #" + credit.getId()));
 
         switch (result) {

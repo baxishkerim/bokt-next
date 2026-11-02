@@ -1,6 +1,5 @@
 package az.bokt.credit.payment;
 
-import az.bokt.common.domain.EntityStatus;
 import az.bokt.common.error.BusinessException;
 import az.bokt.common.error.ErrorCode;
 import az.bokt.credit.domain.Credit;
@@ -66,9 +65,8 @@ public class ReversalService {
         Currency currency = currencyRepo.findById(credit.getCurrencyId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Валюта кредита не найдена"));
 
-        OrgCard mother = orgCardRepo
-                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
+        OrgCard mother = orgCardRepo.findFirstByOrderByIdAsc()
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "У организации не задана материнская карта"));
 
         ProcessingResult result = processingClient.reverse(new ReversalRequest(
                 credit.getChargeGuid(), credit.getChargeRrn(), mother.getPan(), reverseAmount, currency.getCode()));

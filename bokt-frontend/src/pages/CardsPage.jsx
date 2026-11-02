@@ -36,9 +36,10 @@ export default function CardsPage() {
 
   return (
     <Box>
-      <PageHeader title="Карты организации"
-        subtitle="Карты-источники средств (с них списывается при выдаче). Карта клиента задаётся в заявке на кредит."
-        action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>Добавить карту</Button>} />
+      <PageHeader title="Материнская карта организации"
+        subtitle="Одна карта-источник на организацию (с неё списывается при выдаче). Карта клиента задаётся в заявке на кредит."
+        action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
+          {rows.length > 0 ? 'Изменить карту' : 'Добавить карту'}</Button>} />
 
       <TableContainer component={Paper} variant="outlined">
         <Table size="small">
@@ -86,8 +87,8 @@ export default function CardsPage() {
       </TableContainer>
 
       {addOpen && (
-        <AddCardDialog onClose={() => setAddOpen(false)}
-          onAdded={() => { setAddOpen(false); load(); notify('Карта добавлена'); }} />
+        <AddCardDialog card={rows[0] || null} onClose={() => setAddOpen(false)}
+          onAdded={() => { setAddOpen(false); load(); notify(rows.length > 0 ? 'Карта обновлена' : 'Карта добавлена'); }} />
       )}
       {balanceCard && (
         <BalanceDialog card={balanceCard} onClose={() => setBalanceCard(null)}
@@ -97,19 +98,23 @@ export default function CardsPage() {
   );
 }
 
-function AddCardDialog({ onClose, onAdded }) {
+function AddCardDialog({ card, onClose, onAdded }) {
   const { notify } = useFeedback();
-  const [form, setForm] = useState({ pan: '', expiry: '', merchant: '', balance: '' });
+  const editing = Boolean(card);
+  const [form, setForm] = useState({
+    pan: '', expiry: card?.expiry || '', merchant: card?.merchant || '', balance: '',
+  });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const submit = async () => {
     setBusy(true);
     try {
-      await cardsApi.add({
-        pan: form.pan.trim(), expiry: form.expiry || null,
-        merchant: form.merchant || null, balance: form.balance ? Number(form.balance) : 0,
-      });
+      const body = {
+        pan: form.pan.trim() || null, expiry: form.expiry || null, merchant: form.merchant || null,
+      };
+      if (!editing) body.balance = form.balance ? Number(form.balance) : 0;
+      await cardsApi.add(body);
       onAdded();
     } catch (e) { notify(errorMessage(e), 'error'); }
     finally { setBusy(false); }
@@ -117,19 +122,23 @@ function AddCardDialog({ onClose, onAdded }) {
 
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Новая карта организации</DialogTitle>
+      <DialogTitle>{editing ? 'Изменить материнскую карту' : 'Материнская карта организации'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')} />
+          <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')}
+            helperText={editing ? `Текущая: ${card.maskedPan}. Оставьте пустым, чтобы не менять` : undefined} />
           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
-          <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
-            onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
+          {!editing && (
+            <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
+              onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Отмена</Button>
-        <Button variant="contained" onClick={submit} disabled={busy || !form.pan}>Добавить</Button>
+        <Button variant="contained" onClick={submit} disabled={busy || (!editing && !form.pan)}>
+          {editing ? 'Сохранить' : 'Добавить'}</Button>
       </DialogActions>
     </Dialog>
   );

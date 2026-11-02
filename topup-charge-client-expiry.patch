@@ -1,0 +1,492 @@
+diff --git a/api/src/main/resources/db/migration/V11__credit_client_card_expiry.sql b/api/src/main/resources/db/migration/V11__credit_client_card_expiry.sql
+new file mode 100644
+index 0000000..7b4f1ea
+--- /dev/null
++++ b/api/src/main/resources/db/migration/V11__credit_client_card_expiry.sql
+@@ -0,0 +1,2 @@
++-- Срок карты клиента (MM/yy): вводится оператором, уходит в ExpDate получателя (TranzAxis).
++alter table credits add column client_card_expiry varchar(8);
+diff --git a/bokt-frontend/src/pages/CardsPage.jsx b/bokt-frontend/src/pages/CardsPage.jsx
+index 9d74ff2..5b5f67a 100644
+--- a/bokt-frontend/src/pages/CardsPage.jsx
++++ b/bokt-frontend/src/pages/CardsPage.jsx
+@@ -36,9 +36,10 @@ export default function CardsPage() {
+ 
+   return (
+     <Box>
+-      <PageHeader title="Карты организации"
+-        subtitle="Карты-источники средств (с них списывается при выдаче). Карта клиента задаётся в заявке на кредит."
+-        action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>Добавить карту</Button>} />
++      <PageHeader title="Материнская карта организации"
++        subtitle="Одна карта-источник на организацию (с неё списывается при выдаче). Карта клиента задаётся в заявке на кредит."
++        action={<Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
++          {rows.length > 0 ? 'Изменить карту' : 'Добавить карту'}</Button>} />
+ 
+       <TableContainer component={Paper} variant="outlined">
+         <Table size="small">
+@@ -86,8 +87,8 @@ export default function CardsPage() {
+       </TableContainer>
+ 
+       {addOpen && (
+-        <AddCardDialog onClose={() => setAddOpen(false)}
+-          onAdded={() => { setAddOpen(false); load(); notify('Карта добавлена'); }} />
++        <AddCardDialog card={rows[0] || null} onClose={() => setAddOpen(false)}
++          onAdded={() => { setAddOpen(false); load(); notify(rows.length > 0 ? 'Карта обновлена' : 'Карта добавлена'); }} />
+       )}
+       {balanceCard && (
+         <BalanceDialog card={balanceCard} onClose={() => setBalanceCard(null)}
+@@ -97,19 +98,23 @@ export default function CardsPage() {
+   );
+ }
+ 
+-function AddCardDialog({ onClose, onAdded }) {
++function AddCardDialog({ card, onClose, onAdded }) {
+   const { notify } = useFeedback();
+-  const [form, setForm] = useState({ pan: '', expiry: '', merchant: '', balance: '' });
++  const editing = Boolean(card);
++  const [form, setForm] = useState({
++    pan: '', expiry: card?.expiry || '', merchant: card?.merchant || '', balance: '',
++  });
+   const [busy, setBusy] = useState(false);
+   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+ 
+   const submit = async () => {
+     setBusy(true);
+     try {
+-      await cardsApi.add({
+-        pan: form.pan.trim(), expiry: form.expiry || null,
+-        merchant: form.merchant || null, balance: form.balance ? Number(form.balance) : 0,
+-      });
++      const body = {
++        pan: form.pan.trim() || null, expiry: form.expiry || null, merchant: form.merchant || null,
++      };
++      if (!editing) body.balance = form.balance ? Number(form.balance) : 0;
++      await cardsApi.add(body);
+       onAdded();
+     } catch (e) { notify(errorMessage(e), 'error'); }
+     finally { setBusy(false); }
+@@ -117,19 +122,23 @@ function AddCardDialog({ onClose, onAdded }) {
+ 
+   return (
+     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
+-      <DialogTitle>Новая карта организации</DialogTitle>
++      <DialogTitle>{editing ? 'Изменить материнскую карту' : 'Материнская карта организации'}</DialogTitle>
+       <DialogContent>
+         <Stack spacing={2} sx={{ mt: 1 }}>
+-          <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')} />
++          <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')}
++            helperText={editing ? `Текущая: ${card.maskedPan}. Оставьте пустым, чтобы не менять` : undefined} />
+           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
+           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
+-          <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
+-            onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
++          {!editing && (
++            <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
++              onChange={set('balance')} inputProps={{ step: '0.01', min: '0' }} />
++          )}
+         </Stack>
+       </DialogContent>
+       <DialogActions>
+         <Button onClick={onClose}>Отмена</Button>
+-        <Button variant="contained" onClick={submit} disabled={busy || !form.pan}>Добавить</Button>
++        <Button variant="contained" onClick={submit} disabled={busy || (!editing && !form.pan)}>
++          {editing ? 'Сохранить' : 'Добавить'}</Button>
+       </DialogActions>
+     </Dialog>
+   );
+diff --git a/bokt-frontend/src/pages/CreditsPage.jsx b/bokt-frontend/src/pages/CreditsPage.jsx
+index c6761df..b8d6188 100644
+--- a/bokt-frontend/src/pages/CreditsPage.jsx
++++ b/bokt-frontend/src/pages/CreditsPage.jsx
+@@ -155,7 +155,7 @@ export default function CreditsPage() {
+ 
+ function CreateCreditDialog({ open, onClose, onCreated }) {
+   const { notify } = useFeedback();
+-  const empty = { clientId: '', clientCardPan: '', amount: '', currencyId: 1, secretWord: '', description: '' };
++  const empty = { clientId: '', clientCardPan: '', clientCardExpiry: '', amount: '', currencyId: 1, secretWord: '', description: '' };
+   const [form, setForm] = useState(empty);
+   const [busy, setBusy] = useState(false);
+   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+@@ -166,6 +166,7 @@ function CreateCreditDialog({ open, onClose, onCreated }) {
+       await creditsApi.add({
+         clientId: Number(form.clientId),
+         clientCardPan: form.clientCardPan.trim(),
++        clientCardExpiry: form.clientCardExpiry.trim(),
+         amount: Number(form.amount),
+         currencyId: Number(form.currencyId),
+         secretWord: form.secretWord || null,
+@@ -185,6 +186,8 @@ function CreateCreditDialog({ open, onClose, onCreated }) {
+             helperText="Найдите клиента в разделе «Клиенты»" />
+           <TextField label="Карта клиента (PAN)" value={form.clientCardPan} onChange={set('clientCardPan')}
+             helperText="Карта, на которую сядут деньги (клиент снимает с неё)" />
++          <TextField label="Срок карты клиента (MM/ГГ)" value={form.clientCardExpiry} onChange={set('clientCardExpiry')}
++            placeholder="09/29" helperText="Срок действия карты клиента" />
+           <Stack direction="row" spacing={2}>
+             <TextField label="Сумма" type="number" value={form.amount} onChange={set('amount')}
+               inputProps={{ step: '0.01', min: '0' }} sx={{ flex: 1 }} />
+diff --git a/credit/src/main/java/az/bokt/credit/domain/Credit.java b/credit/src/main/java/az/bokt/credit/domain/Credit.java
+index 2c9c4bc..3b58dde 100644
+--- a/credit/src/main/java/az/bokt/credit/domain/Credit.java
++++ b/credit/src/main/java/az/bokt/credit/domain/Credit.java
+@@ -38,10 +38,14 @@ public class Credit extends TenantAwareEntity {
+     @Column(name = "client_id", nullable = false)
+     private Long clientId;
+ 
+-    /** Карта клиента, на которую зачисляются средства (TOPUP). */
++    /** Карта клиента, на которую зачисляются средства. */
+     @Column(name = "client_card_pan", length = 32)
+     private String clientCardPan;
+ 
++    /** Срок карты клиента ("MM/yy"), вводится оператором; идёт в ExpDate получателя. */
++    @Column(name = "client_card_expiry", length = 8)
++    private String clientCardExpiry;
++
+     /** Сумма в минорных единицах. */
+     @Column(name = "amount_minor", nullable = false)
+     private long amountMinor;
+diff --git a/credit/src/main/java/az/bokt/credit/dto/CreateCreditRequest.java b/credit/src/main/java/az/bokt/credit/dto/CreateCreditRequest.java
+index 644c024..6961abc 100644
+--- a/credit/src/main/java/az/bokt/credit/dto/CreateCreditRequest.java
++++ b/credit/src/main/java/az/bokt/credit/dto/CreateCreditRequest.java
+@@ -2,6 +2,7 @@ package az.bokt.credit.dto;
+ 
+ import jakarta.validation.constraints.NotBlank;
+ import jakarta.validation.constraints.NotNull;
++import jakarta.validation.constraints.Pattern;
+ import jakarta.validation.constraints.Positive;
+ 
+ import java.math.BigDecimal;
+@@ -15,6 +16,7 @@ import java.math.BigDecimal;
+ public record CreateCreditRequest(
+         @NotNull Long clientId,
+         @NotBlank String clientCardPan,
++        @NotBlank @Pattern(regexp = "\\d{2}/\\d{2}", message = "Срок карты в формате MM/ГГ") String clientCardExpiry,
+         @NotNull @Positive BigDecimal amount,
+         @NotNull Long currencyId,
+         Long branchId,
+diff --git a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+index edf316f..7d73b4f 100644
+--- a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
++++ b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+@@ -1,6 +1,5 @@
+ package az.bokt.credit.payment;
+ 
+-import az.bokt.common.domain.EntityStatus;
+ import az.bokt.common.error.BusinessException;
+ import az.bokt.common.error.ErrorCode;
+ import az.bokt.credit.domain.Credit;
+@@ -19,10 +18,9 @@ import org.springframework.stereotype.Service;
+  * Выдача кредита (валюта — AZN) — ОДНА операция процессинга (paymentCredit):
+  * списание с материнской карты организации на карту клиента, GUID "CH"+id.
+  * <p>
+- * Карта клиента (карта выдачи) — динамическая: её PAN вводит оператор при создании заявки
+- * ({@code credit.clientCardPan}), а не берётся из пула. Все деньги садятся на эту одну карту;
+- * клиент затем снимает с неё наличные. Источник (материнская карта) выбирается из пула
+- * активных карт типа MOTHER.
++ * Карта клиента (карта выдачи) — динамическая: её PAN и срок вводит оператор при создании заявки
++ * ({@code credit.clientCardPan}/{@code clientCardExpiry}). Все деньги садятся на эту одну карту;
++ * клиент затем снимает с неё наличные. Источник — единственная материнская карта организации.
+  * Идемпотентность — по GUID (дубликат трактуется как уже выполненная операция).
+  */
+ @Service
+@@ -47,20 +45,23 @@ public class CreditPaymentService {
+             throw new BusinessException(ErrorCode.CONFLICT, "Не указана карта клиента для выдачи");
+         }
+ 
+-        // Источник — активная материнская карта из пула
+-        OrgCard mother = orgCardRepo
+-                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
+-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
++        // Источник — единственная материнская карта организации
++        OrgCard mother = orgCardRepo.findFirstByOrderByIdAsc()
++                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "У организации не задана материнская карта"));
++        if (!mother.isActive()) {
++            throw new BusinessException(ErrorCode.CONFLICT, "Материнская карта организации заблокирована");
++        }
+ 
+         String guid = "CH" + credit.getId();
+         credit.setChargeGuid(guid);
+ 
+-        // Одна операция: материнская карта → карта клиента
++        // Одна операция: материнская карта → карта клиента (PAN + срок)
+         ProcessingResult result = processingClient.charge(new ProcessingRequest(
+                 guid,
+-                mother.getPan(), mother.getExpiry(), null,   // CVV не храним → AuthChecked=true
++                mother.getPan(),
+                 credit.getClientCardPan(),
+-                amount, 0L, AZN,
++                credit.getClientCardExpiry(),
++                amount, AZN,
+                 guid, "Credit #" + credit.getId()));
+ 
+         switch (result) {
+diff --git a/credit/src/main/java/az/bokt/credit/payment/ReversalService.java b/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
+index 09ef6b7..3e61bd5 100644
+--- a/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
++++ b/credit/src/main/java/az/bokt/credit/payment/ReversalService.java
+@@ -1,6 +1,5 @@
+ package az.bokt.credit.payment;
+ 
+-import az.bokt.common.domain.EntityStatus;
+ import az.bokt.common.error.BusinessException;
+ import az.bokt.common.error.ErrorCode;
+ import az.bokt.credit.domain.Credit;
+@@ -66,9 +65,8 @@ public class ReversalService {
+         Currency currency = currencyRepo.findById(credit.getCurrencyId())
+                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Валюта кредита не найдена"));
+ 
+-        OrgCard mother = orgCardRepo
+-                .findFirstByStatusOrderByIdAsc(EntityStatus.ACTIVE)
+-                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "Нет активной карты организации (источника)"));
++        OrgCard mother = orgCardRepo.findFirstByOrderByIdAsc()
++                .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "У организации не задана материнская карта"));
+ 
+         ProcessingResult result = processingClient.reverse(new ReversalRequest(
+                 credit.getChargeGuid(), credit.getChargeRrn(), mother.getPan(), reverseAmount, currency.getCode()));
+diff --git a/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java b/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
+index 926bac3..739d974 100644
+--- a/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
++++ b/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
+@@ -1,28 +1,25 @@
+ package az.bokt.credit.processing;
+ 
+ /**
+- * Запрос на выдачу (charge/paymentCredit): одна операция «материнская карта → карта выдачи».
+- * Соответствует методу {@code payment}/{@code tx.charge} старого сервиса (TranzAxis).
++ * Запрос на выдачу (charge): одна операция «материнская карта организации → карта клиента».
++ * Соответствует методу {@code topUp} старого сервиса (TranzAxis): источник — доверенная карта
++ * организации (AuthChecked=true, без CVV и без срока), получатель — карта клиента (PAN + срок).
+  *
+- * @param guid          идемпотентный ключ операции ("CH"+creditId), идёт в Match Key
+- * @param payerPan      материнская карта — источник (Cust/Token/Card)
+- * @param payerExpiry   срок материнской карты в формате MMyy
+- * @param payerCvv      CVV2 материнской карты; обычно {@code null} → AuthChecked=true (CVV не храним)
+- * @param payeePan      карта выдачи — получатель (Payee/Card), клиент снимает с неё
+- * @param amountMinor   сумма в минорных единицах
+- * @param feeMinor      комиссия в минорных единицах (обычно 0)
+- * @param currencyCode  числовой ISO-код валюты (например "944" для AZN)
+- * @param reference     бизнес-ссылка (обычно = guid)
+- * @param description   назначение платежа
++ * @param guid         идемпотентный ключ операции ("CH"+creditId), идёт в Match Key
++ * @param sourcePan    материнская карта организации — источник (Cust/Token/Card Pan)
++ * @param payeePan     карта клиента — получатель (Payee/Card Pan)
++ * @param payeeExpiry  срок карты клиента в формате "MM/yy"; идёт в ExpDate получателя; может быть null
++ * @param amountMinor  сумма в минорных единицах
++ * @param currencyCode числовой ISO-код валюты (например "944" для AZN)
++ * @param reference    бизнес-ссылка (обычно = guid)
++ * @param description  назначение платежа (для логов)
+  */
+ public record ProcessingRequest(
+         String guid,
+-        String payerPan,
+-        String payerExpiry,
+-        String payerCvv,
++        String sourcePan,
+         String payeePan,
++        String payeeExpiry,
+         long amountMinor,
+-        long feeMinor,
+         String currencyCode,
+         String reference,
+         String description
+diff --git a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
+index 796059c..0377be5 100644
+--- a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
++++ b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
+@@ -63,9 +63,7 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+     public ProcessingResult charge(ProcessingRequest req) {
+         try {
+             SimpleDateFormat full = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
+-            SimpleDateFormat mmYY = new SimpleDateFormat("MMyy");
+             String amount = minorToDecimal(req.amountMinor());
+-            String fee = minorToDecimal(req.feeMinor());
+ 
+             SOAPMessage msg = MessageFactory.newInstance().createMessage();
+             SOAPEnvelope env = msg.getSOAPPart().getEnvelope();
+@@ -76,37 +74,40 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+             SOAPElement request = tran.addChildElement(new QName(TRAN, "Request", "ns2"));
+             request.setAttribute("InitiatorRid", props.initiatorRid());
+             request.setAttribute("ProcessorInstId", props.processorInstId());
++            request.setAttribute("OriginatorInstId", props.originatorId());
++            request.setAttribute("LocalTime", full.format(new Date()));
+             request.setAttribute("Kind", props.chargeKind());
+             request.setAttribute("LifePhase", "Single");
++            request.setAttribute("IsReversal", "false");
++            request.setAttribute("IsPartial", "false");
+             request.setAttribute("IsAdvice", "false");
++            request.setAttribute("PreprocessOnly", "false");
++            request.setAttribute("TextMess", "Credit payout");
+ 
+             SOAPElement parties = request.addChildElement(new QName(TRAN, "Parties", "ns2"));
++
++            // Источник — материнская карта организации (доверенная: без CVV и без срока)
+             SOAPElement cust = parties.addChildElement(new QName(TRAN, "Cust", "ns2"));
++            cust.setAttribute("AuthChecked", "true");
+             cust.setAttribute("Presence", "false");
+-            if (req.payerCvv() == null) {
+-                cust.setAttribute("AuthChecked", "true");
+-            }
+             SOAPElement token = cust.addChildElement(new QName(TRAN, "Token", "ns2"));
+             token.setAttribute("Kind", "Card");
+-            SOAPElement payerCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
+-            payerCard.setAttribute("ExpDate", full.format(mmYY.parse(req.payerExpiry())));
+-            payerCard.setAttribute("Pan", req.payerPan());
+-            payerCard.setAttribute("EntryMode", "ECommerce");
+-            SOAPElement auth = payerCard.addChildElement(new QName(TRAN_COMMON, "Auth", "ns4"));
+-            if (req.payerCvv() != null) {
+-                auth.setAttribute("Cvv2", req.payerCvv());
+-            }
++            SOAPElement sourceCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
++            sourceCard.setAttribute("Pan", req.sourcePan());
++
++            // Терминал организации
++            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
++            term.setAttribute("Rid", props.terminalRid());
+ 
++            // Получатель — карта клиента (PAN + срок в ExpDate)
+             SOAPElement payee = parties.addChildElement(new QName(TRAN, "Payee", "ns2"));
+             payee.setAttribute("Type", "CustToken");
+             SOAPElement payeeCard = payee.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
+-            if (req.payeePan() != null) {
+-                payeeCard.setAttribute("Pan", req.payeePan());
++            payeeCard.setAttribute("Pan", req.payeePan());
++            if (req.payeeExpiry() != null && !req.payeeExpiry().isBlank()) {
++                payeeCard.setAttribute("ExpDate", toExpDate(req.payeeExpiry(), full));
+             }
+ 
+-            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
+-            term.setAttribute("Rid", props.terminalRid());
+-
+             SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
+             match.setAttribute("Key", req.guid());
+             match.setAttribute("CheckForDuplicate", "true");
+@@ -115,11 +116,9 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+             SOAPElement mCust = moneys.addChildElement(new QName(TRAN, "Cust", "ns2"));
+             mCust.setAttribute("Ccy", req.currencyCode());
+             mCust.setAttribute("Amt", amount);
+-            mCust.setAttribute("Fee", fee);
+             SOAPElement mClear = moneys.addChildElement(new QName(TRAN, "Clear", "ns2"));
+             mClear.setAttribute("Ccy", req.currencyCode());
+             mClear.setAttribute("Amt", amount);
+-            mClear.setAttribute("AcqFeeAmt", fee);
+ 
+             String response = send(msg, "CHARGE", req.guid());
+             return readTranResult(response);
+@@ -332,4 +331,16 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+     private String minorToDecimal(long minor) {
+         return BigDecimal.valueOf(minor).movePointLeft(2).toPlainString();
+     }
++
++    /**
++     * Срок карты клиента "MM/yy" (или "MMyy") → ExpDate TranzAxis (ISO, первый день месяца).
++     * Терпим к разделителям: "09/29", "0929", "09-29" → одинаковый результат.
++     */
++    private String toExpDate(String input, SimpleDateFormat full) throws Exception {
++        String digits = input.replaceAll("\\D", "");
++        if (digits.length() != 4) {
++            throw new IllegalArgumentException("Некорректный срок карты клиента: " + input);
++        }
++        return full.format(new SimpleDateFormat("MMyy").parse(digits));
++    }
+ }
+diff --git a/credit/src/main/java/az/bokt/credit/service/CreditService.java b/credit/src/main/java/az/bokt/credit/service/CreditService.java
+index 443354a..dc0c3e5 100644
+--- a/credit/src/main/java/az/bokt/credit/service/CreditService.java
++++ b/credit/src/main/java/az/bokt/credit/service/CreditService.java
+@@ -59,6 +59,7 @@ public class CreditService {
+         Credit credit = new Credit();
+         credit.setClientId(client.getId());
+         credit.setClientCardPan(req.clientCardPan());
++        credit.setClientCardExpiry(req.clientCardExpiry());
+         credit.setAmountMinor(Money.toMinor(req.amount()));
+         credit.setCurrencyId(req.currencyId());
+         credit.setBranchId(CurrentUser.branchId());   // филиал оператора
+diff --git a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+index 58e45ef..484aeec 100644
+--- a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
++++ b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+@@ -1,15 +1,15 @@
+ package az.bokt.tenant.dto;
+ 
+-import jakarta.validation.constraints.NotBlank;
+-
+ import java.math.BigDecimal;
+ 
+ /**
+- * Добавление карты организации (источник средств). balance — информационный остаток
+- * в основных единицах (факт берётся из процессинга).
++ * Добавление/изменение материнской карты организации (источник средств). Карта одна на
++ * организацию: первый вызов создаёт её, последующие — редактируют. При редактировании
++ * {@code pan} можно оставить пустым, чтобы не менять номер (в ответе он замаскирован).
++ * balance — информационный остаток в основных единицах (факт берётся из процессинга).
+  */
+ public record CreateCardRequest(
+-        @NotBlank String pan,
++        String pan,
+         String expiry,
+         String merchant,
+         BigDecimal balance
+diff --git a/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java b/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
+index fdeb3b5..8c600be 100644
+--- a/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
++++ b/tenant/src/main/java/az/bokt/tenant/repo/OrgCardRepository.java
+@@ -1,6 +1,5 @@
+ package az.bokt.tenant.repo;
+ 
+-import az.bokt.common.domain.EntityStatus;
+ import az.bokt.tenant.domain.OrgCard;
+ import org.springframework.data.jpa.repository.JpaRepository;
+ 
+@@ -11,6 +10,6 @@ public interface OrgCardRepository extends JpaRepository<OrgCard, Long> {
+ 
+     List<OrgCard> findAllByOrderByIdAsc();
+ 
+-    /** Первая активная карта организации — источник CHARGE при выдаче. */
+-    Optional<OrgCard> findFirstByStatusOrderByIdAsc(EntityStatus status);
++    /** Единственная материнская карта организации (одна на организацию) — источник CHARGE при выдаче. */
++    Optional<OrgCard> findFirstByOrderByIdAsc();
+ }
+diff --git a/tenant/src/main/java/az/bokt/tenant/service/CardService.java b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+index 165f738..a3b0e2a 100644
+--- a/tenant/src/main/java/az/bokt/tenant/service/CardService.java
++++ b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+@@ -32,6 +32,12 @@ public class CardService {
+         return cardRepo.findAllByOrderByIdAsc();
+     }
+ 
++    /**
++     * Создать или изменить материнскую карту организации (она одна на организацию).
++     * Первый вызов создаёт карту, последующие — редактируют существующую. При редактировании
++     * пустой {@code pan} означает «не менять номер». Доступно только пользователю организации
++     * (директору): супер-админ платформы к тенанту не привязан.
++     */
+     @Transactional
+     public OrgCard add(CreateCardRequest req) {
+         Long tenantId = TenantContext.getTenantId();
+@@ -40,13 +46,21 @@ public class CardService {
+             throw new BusinessException(ErrorCode.ACCESS_DENIED,
+                     "Управление картами доступно пользователю организации (директору), а не супер-админу платформы");
+         }
+-        OrgCard card = new OrgCard();
+-        card.setTenantId(tenantId);
+-        card.setPan(req.pan().trim());
++        OrgCard card = cardRepo.findFirstByOrderByIdAsc().orElse(null);
++        boolean creating = (card == null);
++        if (creating) {
++            card = new OrgCard();
++            card.setTenantId(tenantId);
++            card.setStatus(EntityStatus.ACTIVE);
++            card.setBalanceMinor(toMinor(req.balance()));
++        }
++        if (req.pan() != null && !req.pan().isBlank()) {
++            card.setPan(req.pan().trim());
++        } else if (creating) {
++            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Укажите номер карты");
++        }
+         card.setExpiry(req.expiry());
+         card.setMerchant(req.merchant());
+-        card.setStatus(EntityStatus.ACTIVE);
+-        card.setBalanceMinor(toMinor(req.balance()));
+         return cardRepo.save(card);
+     }
+ 

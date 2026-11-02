@@ -155,7 +155,7 @@ export default function CreditsPage() {
 
 function CreateCreditDialog({ open, onClose, onCreated }) {
   const { notify } = useFeedback();
-  const empty = { clientId: '', clientCardPan: '', amount: '', currencyId: 1, secretWord: '', description: '' };
+  const empty = { clientId: '', clientCardPan: '', clientCardExpiry: '', amount: '', currencyId: 1, secretWord: '', description: '' };
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -166,6 +166,7 @@ function CreateCreditDialog({ open, onClose, onCreated }) {
       await creditsApi.add({
         clientId: Number(form.clientId),
         clientCardPan: form.clientCardPan.trim(),
+        clientCardExpiry: form.clientCardExpiry.trim(),
         amount: Number(form.amount),
         currencyId: Number(form.currencyId),
         secretWord: form.secretWord || null,
@@ -185,6 +186,8 @@ function CreateCreditDialog({ open, onClose, onCreated }) {
             helperText="Найдите клиента в разделе «Клиенты»" />
           <TextField label="Карта клиента (PAN)" value={form.clientCardPan} onChange={set('clientCardPan')}
             helperText="Карта, на которую сядут деньги (клиент снимает с неё)" />
+          <TextField label="Срок карты клиента (MM/ГГ)" value={form.clientCardExpiry} onChange={set('clientCardExpiry')}
+            placeholder="09/29" helperText="Срок действия карты клиента" />
           <Stack direction="row" spacing={2}>
             <TextField label="Сумма" type="number" value={form.amount} onChange={set('amount')}
               inputProps={{ step: '0.01', min: '0' }} sx={{ flex: 1 }} />

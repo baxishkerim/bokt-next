@@ -32,6 +32,12 @@ public class CardService {
         return cardRepo.findAllByOrderByIdAsc();
     }
 
+    /**
+     * Создать или изменить материнскую карту организации (она одна на организацию).
+     * Первый вызов создаёт карту, последующие — редактируют существующую. При редактировании
+     * пустой {@code pan} означает «не менять номер». Доступно только пользователю организации
+     * (директору): супер-админ платформы к тенанту не привязан.
+     */
     @Transactional
     public OrgCard add(CreateCardRequest req) {
         Long tenantId = TenantContext.getTenantId();
@@ -40,13 +46,21 @@ public class CardService {
             throw new BusinessException(ErrorCode.ACCESS_DENIED,
                     "Управление картами доступно пользователю организации (директору), а не супер-админу платформы");
         }
-        OrgCard card = new OrgCard();
-        card.setTenantId(tenantId);
-        card.setPan(req.pan().trim());
+        OrgCard card = cardRepo.findFirstByOrderByIdAsc().orElse(null);
+        boolean creating = (card == null);
+        if (creating) {
+            card = new OrgCard();
+            card.setTenantId(tenantId);
+            card.setStatus(EntityStatus.ACTIVE);
+            card.setBalanceMinor(toMinor(req.balance()));
+        }
+        if (req.pan() != null && !req.pan().isBlank()) {
+            card.setPan(req.pan().trim());
+        } else if (creating) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Укажите номер карты");
+        }
         card.setExpiry(req.expiry());
         card.setMerchant(req.merchant());
-        card.setStatus(EntityStatus.ACTIVE);
-        card.setBalanceMinor(toMinor(req.balance()));
         return cardRepo.save(card);
     }
 

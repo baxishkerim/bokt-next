@@ -38,9 +38,13 @@ public class Credit extends TenantAwareEntity {
     @Column(name = "client_id", nullable = false)
     private Long clientId;
 
-    /** Карта клиента, на которую зачисляются средства (TOPUP). */
+    /** Карта клиента, на которую зачисляются средства. */
     @Column(name = "client_card_pan", length = 32)
     private String clientCardPan;
+
+    /** Срок карты клиента ("MM/yy"), вводится оператором; идёт в ExpDate получателя. */
+    @Column(name = "client_card_expiry", length = 8)
+    private String clientCardExpiry;
 
     /** Сумма в минорных единицах. */
     @Column(name = "amount_minor", nullable = false)

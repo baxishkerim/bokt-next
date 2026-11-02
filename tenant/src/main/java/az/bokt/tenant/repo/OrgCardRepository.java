@@ -1,6 +1,5 @@
 package az.bokt.tenant.repo;
 
-import az.bokt.common.domain.EntityStatus;
 import az.bokt.tenant.domain.OrgCard;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -11,6 +10,6 @@ public interface OrgCardRepository extends JpaRepository<OrgCard, Long> {
 
     List<OrgCard> findAllByOrderByIdAsc();
 
-    /** Первая активная карта организации — источник CHARGE при выдаче. */
-    Optional<OrgCard> findFirstByStatusOrderByIdAsc(EntityStatus status);
+    /** Единственная материнская карта организации (одна на организацию) — источник CHARGE при выдаче. */
+    Optional<OrgCard> findFirstByOrderByIdAsc();
 }

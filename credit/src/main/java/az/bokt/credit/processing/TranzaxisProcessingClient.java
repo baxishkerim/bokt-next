@@ -63,9 +63,7 @@ public class TranzaxisProcessingClient implements ProcessingClient {
     public ProcessingResult charge(ProcessingRequest req) {
         try {
             SimpleDateFormat full = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
-            SimpleDateFormat mmYY = new SimpleDateFormat("MMyy");
             String amount = minorToDecimal(req.amountMinor());
-            String fee = minorToDecimal(req.feeMinor());
 
             SOAPMessage msg = MessageFactory.newInstance().createMessage();
             SOAPEnvelope env = msg.getSOAPPart().getEnvelope();
@@ -76,36 +74,39 @@ public class TranzaxisProcessingClient implements ProcessingClient {
             SOAPElement request = tran.addChildElement(new QName(TRAN, "Request", "ns2"));
             request.setAttribute("InitiatorRid", props.initiatorRid());
             request.setAttribute("ProcessorInstId", props.processorInstId());
+            request.setAttribute("OriginatorInstId", props.originatorId());
+            request.setAttribute("LocalTime", full.format(new Date()));
             request.setAttribute("Kind", props.chargeKind());
             request.setAttribute("LifePhase", "Single");
+            request.setAttribute("IsReversal", "false");
+            request.setAttribute("IsPartial", "false");
             request.setAttribute("IsAdvice", "false");
+            request.setAttribute("PreprocessOnly", "false");
+            request.setAttribute("TextMess", "Credit payout");
 
             SOAPElement parties = request.addChildElement(new QName(TRAN, "Parties", "ns2"));
+
+            // Источник — материнская карта организации (доверенная: без CVV и без срока)
             SOAPElement cust = parties.addChildElement(new QName(TRAN, "Cust", "ns2"));
+            cust.setAttribute("AuthChecked", "true");
             cust.setAttribute("Presence", "false");
-            if (req.payerCvv() == null) {
-                cust.setAttribute("AuthChecked", "true");
-            }
             SOAPElement token = cust.addChildElement(new QName(TRAN, "Token", "ns2"));
             token.setAttribute("Kind", "Card");
-            SOAPElement payerCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
-            payerCard.setAttribute("ExpDate", full.format(mmYY.parse(req.payerExpiry())));
-            payerCard.setAttribute("Pan", req.payerPan());
-            payerCard.setAttribute("EntryMode", "ECommerce");
-            SOAPElement auth = payerCard.addChildElement(new QName(TRAN_COMMON, "Auth", "ns4"));
-            if (req.payerCvv() != null) {
-                auth.setAttribute("Cvv2", req.payerCvv());
-            }
+            SOAPElement sourceCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
+            sourceCard.setAttribute("Pan", req.sourcePan());
 
+            // Терминал организации
+            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
+            term.setAttribute("Rid", props.terminalRid());
+
+            // Получатель — карта клиента (PAN + срок в ExpDate)
             SOAPElement payee = parties.addChildElement(new QName(TRAN, "Payee", "ns2"));
             payee.setAttribute("Type", "CustToken");
             SOAPElement payeeCard = payee.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
-            if (req.payeePan() != null) {
-                payeeCard.setAttribute("Pan", req.payeePan());
+            payeeCard.setAttribute("Pan", req.payeePan());
+            if (req.payeeExpiry() != null && !req.payeeExpiry().isBlank()) {
+                payeeCard.setAttribute("ExpDate", toExpDate(req.payeeExpiry(), full));
             }
-
-            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
-            term.setAttribute("Rid", props.terminalRid());
 
             SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
             match.setAttribute("Key", req.guid());
@@ -115,11 +116,9 @@ public class TranzaxisProcessingClient implements ProcessingClient {
             SOAPElement mCust = moneys.addChildElement(new QName(TRAN, "Cust", "ns2"));
             mCust.setAttribute("Ccy", req.currencyCode());
             mCust.setAttribute("Amt", amount);
-            mCust.setAttribute("Fee", fee);
             SOAPElement mClear = moneys.addChildElement(new QName(TRAN, "Clear", "ns2"));
             mClear.setAttribute("Ccy", req.currencyCode());
             mClear.setAttribute("Amt", amount);
-            mClear.setAttribute("AcqFeeAmt", fee);
 
             String response = send(msg, "CHARGE", req.guid());
             return readTranResult(response);
@@ -331,5 +330,17 @@ public class TranzaxisProcessingClient implements ProcessingClient {
 
     private String minorToDecimal(long minor) {
         return BigDecimal.valueOf(minor).movePointLeft(2).toPlainString();
+    }
+
+    /**
+     * Срок карты клиента "MM/yy" (или "MMyy") → ExpDate TranzAxis (ISO, первый день месяца).
+     * Терпим к разделителям: "09/29", "0929", "09-29" → одинаковый результат.
+     */
+    private String toExpDate(String input, SimpleDateFormat full) throws Exception {
+        String digits = input.replaceAll("\\D", "");
+        if (digits.length() != 4) {
+            throw new IllegalArgumentException("Некорректный срок карты клиента: " + input);
+        }
+        return full.format(new SimpleDateFormat("MMyy").parse(digits));
     }
 }
