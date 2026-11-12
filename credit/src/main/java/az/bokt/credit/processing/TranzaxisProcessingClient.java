@@ -3,8 +3,6 @@ package az.bokt.credit.processing;
 import jakarta.xml.soap.MessageFactory;
 import jakarta.xml.soap.SOAPBody;
 import jakarta.xml.soap.SOAPBodyElement;
-import jakarta.xml.soap.SOAPConnection;
-import jakarta.xml.soap.SOAPConnectionFactory;
 import jakarta.xml.soap.SOAPElement;
 import jakarta.xml.soap.SOAPEnvelope;
 import jakarta.xml.soap.SOAPMessage;
@@ -21,8 +19,14 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.StringReader;
 import java.math.BigDecimal;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -250,25 +254,57 @@ public class TranzaxisProcessingClient implements ProcessingClient {
         env.addNamespaceDeclaration("ns4", TRAN_COMMON);
     }
 
+    /**
+     * Отправка SOAP-конверта на endpoint TranzAxis через HttpURLConnection с явными таймаутами.
+     * Точный URL логируется на каждый вызов (видно, на какой хост реально идём — без DEBUG),
+     * а при пустом/неверном URL или HTTP-ошибке падаем быстро и внятно вместо зависания.
+     */
     private String send(SOAPMessage msg, String op, String ref) throws Exception {
-        if (log.isDebugEnabled()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            msg.writeTo(out);
-            log.debug("TranzAxis {} request ref={}:\n{}", op, ref, out.toString());
+        String endpoint = props.url();
+        log.info("TranzAxis {} → {} (ref={}, connectTimeout={}ms, readTimeout={}ms)",
+                op, endpoint, ref, props.connectTimeoutMs(), props.readTimeoutMs());
+        if (endpoint == null || endpoint.isBlank()) {
+            throw new IllegalStateException("bokt.processing.tranzaxis.url не задан");
         }
-        SOAPConnection conn = SOAPConnectionFactory.newInstance().createConnection();
+
+        msg.saveChanges();
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        msg.writeTo(payload);
+        byte[] body = payload.toByteArray();
+        if (log.isDebugEnabled()) {
+            log.debug("TranzAxis {} request ref={}:\n{}", op, ref, new String(body, StandardCharsets.UTF_8));
+        }
+
+        HttpURLConnection http = (HttpURLConnection) URI.create(endpoint).toURL().openConnection();
         try {
-            SOAPMessage resp = conn.call(msg, props.url());
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            resp.writeTo(out);
-            String xml = out.toString();
+            http.setRequestMethod("POST");
+            http.setDoOutput(true);
+            http.setConnectTimeout(props.connectTimeoutMs());
+            http.setReadTimeout(props.readTimeoutMs());
+            http.setRequestProperty("Content-Type", mimeHeader(msg, "Content-Type", "text/xml; charset=utf-8"));
+            http.setRequestProperty("SOAPAction", "\"\"");
+            try (OutputStream os = http.getOutputStream()) {
+                os.write(body);
+            }
+            int code = http.getResponseCode();
+            InputStream is = (code >= 200 && code < 300) ? http.getInputStream() : http.getErrorStream();
+            String xml = (is == null) ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
             if (log.isDebugEnabled()) {
-                log.debug("TranzAxis {} response ref={}:\n{}", op, ref, xml);
+                log.debug("TranzAxis {} response ref={} (HTTP {}):\n{}", op, ref, code, xml);
+            }
+            if (code < 200 || code >= 300) {
+                throw new IOException("TranzAxis вернул HTTP " + code + " от " + endpoint);
             }
             return xml;
         } finally {
-            conn.close();
+            http.disconnect();
         }
+    }
+
+    /** Первое значение MIME-заголовка сообщения или fallback. */
+    private String mimeHeader(SOAPMessage msg, String name, String fallback) {
+        String[] values = msg.getMimeHeaders().getHeader(name);
+        return (values != null && values.length > 0) ? values[0] : fallback;
     }
 
     /** Разбор ответа Tran в ProcessingResult (Approved/Declined). */

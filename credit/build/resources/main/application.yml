@@ -2,10 +2,13 @@ bokt:
   processing:
     tranzaxis:
       enabled: true
-      url: "http://10.21.20.30:20000/"      # endpoint без ?WSDL (как в старом сервисе)
-      initiator-rid: "Azerpoct"
+      url: "http://172.23.2.2:20000/"
       processor-inst-id: "22"
       originator-id: "22"
-      terminal-rid: "<Rid терминала>"        # ← обязательно, был пропущен
+      terminal-rid: "<Rid терминала>"
       charge-kind: "Payment"
       reverse-kind: "Payment"
+
+logging:
+  level:
+    az.bokt.credit.processing: DEBUG

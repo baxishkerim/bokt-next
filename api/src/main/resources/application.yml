@@ -52,13 +52,15 @@ bokt:
   processing:
     tranzaxis:
       enabled: true
-      url: "http://10.21.20.30:20000/"      # endpoint без ?WSDL (как в старом сервисе)
+      url: "http://172.23.2.2:20000/"        # endpoint без ?WSDL (как в старом сервисе)
       initiator-rid: "Azerpoct"
       processor-inst-id: "22"
       originator-id: "22"
       terminal-rid: "<Rid терминала>"        # ← обязательно, был пропущен
       charge-kind: "Payment"
       reverse-kind: "Payment"
+      connect-timeout-ms: 5000               # таймаут установки соединения
+      read-timeout-ms: 15000                 # таймаут ожидания ответа
 
 management:
   endpoints:
