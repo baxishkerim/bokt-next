@@ -59,6 +59,10 @@ public class CardService {
         } else if (creating) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Укажите номер карты");
         }
+        // CVV: при редактировании пустое значение означает «не менять»
+        if (req.cvv() != null && !req.cvv().isBlank()) {
+            card.setCvv(req.cvv().trim());
+        }
         card.setExpiry(req.expiry());
         card.setMerchant(req.merchant());
         return cardRepo.save(card);

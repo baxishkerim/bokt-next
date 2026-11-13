@@ -56,7 +56,11 @@ bokt:
       initiator-rid: "Azerpoct"
       processor-inst-id: "22"
       originator-id: "22"
-      terminal-rid: "<Rid терминала>"        # ← обязательно, был пропущен
+      terminal-rid: "<Rid терминала>"        # ← обязательно (или terminal-id)
+      # terminal-id: 123                     # Id терминала; если задан — приоритет над rid
+      terminal-name: ""                      # имя мерчанта; если задано — добавляется блок Classification
+      mcc: "6012"                            # MCC терминала (Term/Owner)
+      category-code: "BankCharge"            # CategoryCode запроса
       charge-kind: "Payment"
       reverse-kind: "Payment"
       connect-timeout-ms: 5000               # таймаут установки соединения

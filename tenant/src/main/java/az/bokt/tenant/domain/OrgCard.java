@@ -34,6 +34,10 @@ public class OrgCard extends TenantAwareEntity {
     @Column(length = 8)
     private String expiry;
 
+    /** CVV2 материнской карты — нужен для cardToCard (источник средств). */
+    @Column(length = 8)
+    private String cvv;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private EntityStatus status = EntityStatus.ACTIVE;

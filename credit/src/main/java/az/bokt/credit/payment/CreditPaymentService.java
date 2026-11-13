@@ -51,16 +51,22 @@ public class CreditPaymentService {
         if (!mother.isActive()) {
             throw new BusinessException(ErrorCode.CONFLICT, "Материнская карта организации заблокирована");
         }
+        if (mother.getExpiry() == null || mother.getExpiry().isBlank()
+                || mother.getCvv() == null || mother.getCvv().isBlank()) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "У материнской карты организации не заданы срок и CVV (нужны для выдачи)");
+        }
 
         String guid = "CH" + credit.getId();
         credit.setChargeGuid(guid);
 
-        // Одна операция: материнская карта → карта клиента (PAN + срок)
+        // Одна операция cardToCard: материнская карта (PAN+срок+CVV) → карта клиента (PAN)
         ProcessingResult result = processingClient.charge(new ProcessingRequest(
                 guid,
                 mother.getPan(),
+                mother.getExpiry(),
+                mother.getCvv(),
                 credit.getClientCardPan(),
-                credit.getClientCardExpiry(),
                 amount, AZN,
                 guid, "Credit #" + credit.getId()));
 

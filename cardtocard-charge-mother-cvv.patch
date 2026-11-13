@@ -1,0 +1,330 @@
+diff --git a/api/src/main/resources/application.yml b/api/src/main/resources/application.yml
+index b92061f..929d690 100644
+--- a/api/src/main/resources/application.yml
++++ b/api/src/main/resources/application.yml
+@@ -56,7 +56,11 @@ bokt:
+       initiator-rid: "Azerpoct"
+       processor-inst-id: "22"
+       originator-id: "22"
+-      terminal-rid: "<Rid терминала>"        # ← обязательно, был пропущен
++      terminal-rid: "<Rid терминала>"        # ← обязательно (или terminal-id)
++      # terminal-id: 123                     # Id терминала; если задан — приоритет над rid
++      terminal-name: ""                      # имя мерчанта; если задано — добавляется блок Classification
++      mcc: "6012"                            # MCC терминала (Term/Owner)
++      category-code: "BankCharge"            # CategoryCode запроса
+       charge-kind: "Payment"
+       reverse-kind: "Payment"
+       connect-timeout-ms: 5000               # таймаут установки соединения
+diff --git a/api/src/main/resources/db/migration/V12__org_card_cvv.sql b/api/src/main/resources/db/migration/V12__org_card_cvv.sql
+new file mode 100644
+index 0000000..f2cc366
+--- /dev/null
++++ b/api/src/main/resources/db/migration/V12__org_card_cvv.sql
+@@ -0,0 +1,2 @@
++-- CVV материнской карты: нужен для операции cardToCard (источник средств).
++alter table org_cards add column cvv varchar(8);
+diff --git a/bokt-frontend/src/pages/CardsPage.jsx b/bokt-frontend/src/pages/CardsPage.jsx
+index 5b5f67a..d573092 100644
+--- a/bokt-frontend/src/pages/CardsPage.jsx
++++ b/bokt-frontend/src/pages/CardsPage.jsx
+@@ -102,7 +102,7 @@ function AddCardDialog({ card, onClose, onAdded }) {
+   const { notify } = useFeedback();
+   const editing = Boolean(card);
+   const [form, setForm] = useState({
+-    pan: '', expiry: card?.expiry || '', merchant: card?.merchant || '', balance: '',
++    pan: '', expiry: card?.expiry || '', cvv: '', merchant: card?.merchant || '', balance: '',
+   });
+   const [busy, setBusy] = useState(false);
+   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+@@ -111,7 +111,8 @@ function AddCardDialog({ card, onClose, onAdded }) {
+     setBusy(true);
+     try {
+       const body = {
+-        pan: form.pan.trim() || null, expiry: form.expiry || null, merchant: form.merchant || null,
++        pan: form.pan.trim() || null, expiry: form.expiry || null,
++        cvv: form.cvv.trim() || null, merchant: form.merchant || null,
+       };
+       if (!editing) body.balance = form.balance ? Number(form.balance) : 0;
+       await cardsApi.add(body);
+@@ -128,6 +129,8 @@ function AddCardDialog({ card, onClose, onAdded }) {
+           <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')}
+             helperText={editing ? `Текущая: ${card.maskedPan}. Оставьте пустым, чтобы не менять` : undefined} />
+           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
++          <TextField label="CVV" value={form.cvv} onChange={set('cvv')}
++            helperText={editing ? 'Оставьте пустым, чтобы не менять' : 'Нужен для выдачи (cardToCard)'} />
+           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
+           {!editing && (
+             <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}
+diff --git a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+index 7d73b4f..8201a6d 100644
+--- a/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
++++ b/credit/src/main/java/az/bokt/credit/payment/CreditPaymentService.java
+@@ -51,16 +51,22 @@ public class CreditPaymentService {
+         if (!mother.isActive()) {
+             throw new BusinessException(ErrorCode.CONFLICT, "Материнская карта организации заблокирована");
+         }
++        if (mother.getExpiry() == null || mother.getExpiry().isBlank()
++                || mother.getCvv() == null || mother.getCvv().isBlank()) {
++            throw new BusinessException(ErrorCode.CONFLICT,
++                    "У материнской карты организации не заданы срок и CVV (нужны для выдачи)");
++        }
+ 
+         String guid = "CH" + credit.getId();
+         credit.setChargeGuid(guid);
+ 
+-        // Одна операция: материнская карта → карта клиента (PAN + срок)
++        // Одна операция cardToCard: материнская карта (PAN+срок+CVV) → карта клиента (PAN)
+         ProcessingResult result = processingClient.charge(new ProcessingRequest(
+                 guid,
+                 mother.getPan(),
++                mother.getExpiry(),
++                mother.getCvv(),
+                 credit.getClientCardPan(),
+-                credit.getClientCardExpiry(),
+                 amount, AZN,
+                 guid, "Credit #" + credit.getId()));
+ 
+diff --git a/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java b/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
+index 739d974..6d2ed9f 100644
+--- a/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
++++ b/credit/src/main/java/az/bokt/credit/processing/ProcessingRequest.java
+@@ -1,24 +1,26 @@
+ package az.bokt.credit.processing;
+ 
+ /**
+- * Запрос на выдачу (charge): одна операция «материнская карта организации → карта клиента».
+- * Соответствует методу {@code topUp} старого сервиса (TranzAxis): источник — доверенная карта
+- * организации (AuthChecked=true, без CVV и без срока), получатель — карта клиента (PAN + срок).
++ * Запрос на выдачу (charge): одна операция «материнская карта организации → карта клиента»,
++ * построенная по методу {@code cardToCard} сервиса EBWS (TranzAxis, Kind="Payment").
++ * Источник — материнская карта (PAN + срок + CVV), получатель — карта клиента (только PAN).
+  *
+  * @param guid         идемпотентный ключ операции ("CH"+creditId), идёт в Match Key
+  * @param sourcePan    материнская карта организации — источник (Cust/Token/Card Pan)
++ * @param sourceExpiry срок материнской карты в формате "MM/yy" (идёт в ExpDate источника)
++ * @param sourceCvv    CVV2 материнской карты (идёт в Cust/.../Card/Auth Cvv2)
+  * @param payeePan     карта клиента — получатель (Payee/Card Pan)
+- * @param payeeExpiry  срок карты клиента в формате "MM/yy"; идёт в ExpDate получателя; может быть null
+  * @param amountMinor  сумма в минорных единицах
+  * @param currencyCode числовой ISO-код валюты (например "944" для AZN)
+  * @param reference    бизнес-ссылка (обычно = guid)
+- * @param description  назначение платежа (для логов)
++ * @param description  назначение платежа (идёт в TextMess)
+  */
+ public record ProcessingRequest(
+         String guid,
+         String sourcePan,
++        String sourceExpiry,
++        String sourceCvv,
+         String payeePan,
+-        String payeeExpiry,
+         long amountMinor,
+         String currencyCode,
+         String reference,
+diff --git a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
+index 8189c2f..a94b1e9 100644
+--- a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
++++ b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProcessingClient.java
+@@ -28,7 +28,6 @@ import java.net.HttpURLConnection;
+ import java.net.URI;
+ import java.nio.charset.StandardCharsets;
+ import java.text.SimpleDateFormat;
+-import java.util.Date;
+ 
+ /**
+  * Реальный клиент процессинга TranzAxis (SOAP/SAAJ). Включается при
+@@ -78,44 +77,63 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+             SOAPElement request = tran.addChildElement(new QName(TRAN, "Request", "ns2"));
+             request.setAttribute("InitiatorRid", props.initiatorRid());
+             request.setAttribute("ProcessorInstId", props.processorInstId());
+-            request.setAttribute("OriginatorInstId", props.originatorId());
+-            request.setAttribute("LocalTime", full.format(new Date()));
+             request.setAttribute("Kind", props.chargeKind());
+-            request.setAttribute("LifePhase", "Single");
+-            request.setAttribute("IsReversal", "false");
+-            request.setAttribute("IsPartial", "false");
+             request.setAttribute("IsAdvice", "false");
++            request.setAttribute("IsPartial", "false");
++            request.setAttribute("IsReversal", "false");
++            request.setAttribute("LifePhase", "Single");
++
++            // Classification (MerchantRid/MerchantName) — только если задано имя мерчанта
++            if (props.terminalName() != null && !props.terminalName().isBlank()) {
++                SOAPElement classification = request.addChildElement(new QName(TRAN, "Classification", "ns2"));
++                SOAPElement merchantRid = classification.addChildElement(new QName(TRAN, "Classifier", "ns2"));
++                merchantRid.setAttribute("Key", "MerchantRid");
++                merchantRid.addTextNode(props.terminalRid());
++                SOAPElement merchantName = classification.addChildElement(new QName(TRAN, "Classifier", "ns2"));
++                merchantName.setAttribute("Key", "MerchantName");
++                merchantName.addTextNode(props.terminalName());
++            }
++
++            request.setAttribute("Administrative", "false");
++            if (props.categoryCode() != null && !props.categoryCode().isBlank()) {
++                request.setAttribute("CategoryCode", props.categoryCode());
++            }
+             request.setAttribute("PreprocessOnly", "false");
+-            request.setAttribute("TextMess", "Credit payout");
++            request.setAttribute("TextMess", req.description() == null ? "Credit payout" : req.description());
+ 
+             SOAPElement parties = request.addChildElement(new QName(TRAN, "Parties", "ns2"));
+ 
+-            // Источник — материнская карта организации (доверенная: без CVV и без срока)
++            // Терминал (первым, как в EBWS): Id приоритетнее Rid; Type=Ecom; Owner/Mcc
++            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
++            if (props.terminalId() != null) {
++                term.setAttribute("Id", props.terminalId().toString());
++            } else {
++                term.setAttribute("Rid", props.terminalRid());
++            }
++            term.setAttribute("Type", "Ecom");
++            if (props.mcc() != null && !props.mcc().isBlank()) {
++                SOAPElement owner = term.addChildElement(new QName(TRAN, "Owner", "ns2"));
++                owner.setAttribute("Mcc", props.mcc());
++            }
++
++            // Источник — материнская карта организации (PAN + ExpDate + CVV)
+             SOAPElement cust = parties.addChildElement(new QName(TRAN, "Cust", "ns2"));
+-            cust.setAttribute("AuthChecked", "true");
+-            cust.setAttribute("Presence", "false");
+             SOAPElement token = cust.addChildElement(new QName(TRAN, "Token", "ns2"));
+             token.setAttribute("Kind", "Card");
+             SOAPElement sourceCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
++            sourceCard.setAttribute("EntryMode", "ECommerce");
++            sourceCard.setAttribute("ExpDate", toExpDate(req.sourceExpiry(), full));
+             sourceCard.setAttribute("Pan", req.sourcePan());
++            SOAPElement auth = sourceCard.addChildElement(new QName(TRAN_COMMON, "Auth", "ns4"));
++            auth.setAttribute("Cvv2", req.sourceCvv());
+ 
+-            // Терминал организации
+-            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
+-            term.setAttribute("Rid", props.terminalRid());
+-
+-            // Получатель — карта клиента (PAN + срок в ExpDate)
++            // Получатель — карта клиента (только PAN)
+             SOAPElement payee = parties.addChildElement(new QName(TRAN, "Payee", "ns2"));
+             payee.setAttribute("Type", "CustToken");
+             SOAPElement payeeCard = payee.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
+             payeeCard.setAttribute("Pan", req.payeePan());
+-            if (req.payeeExpiry() != null && !req.payeeExpiry().isBlank()) {
+-                payeeCard.setAttribute("ExpDate", toExpDate(req.payeeExpiry(), full));
+-            }
+-
+-            SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
+-            match.setAttribute("Key", req.guid());
+-            match.setAttribute("CheckForDuplicate", "true");
+ 
++            // Деньги
+             SOAPElement moneys = request.addChildElement(new QName(TRAN, "Moneys", "ns2"));
+             SOAPElement mCust = moneys.addChildElement(new QName(TRAN, "Cust", "ns2"));
+             mCust.setAttribute("Ccy", req.currencyCode());
+@@ -124,6 +142,11 @@ public class TranzaxisProcessingClient implements ProcessingClient {
+             mClear.setAttribute("Ccy", req.currencyCode());
+             mClear.setAttribute("Amt", amount);
+ 
++            // Идемпотентность
++            SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
++            match.setAttribute("CheckForDuplicate", "true");
++            match.setAttribute("Key", req.guid());
++
+             String response = send(msg, "CHARGE", req.guid());
+             return readTranResult(response);
+         } catch (Exception e) {
+diff --git a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProperties.java b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProperties.java
+index 33fc3a2..4896b85 100644
+--- a/credit/src/main/java/az/bokt/credit/processing/TranzaxisProperties.java
++++ b/credit/src/main/java/az/bokt/credit/processing/TranzaxisProperties.java
+@@ -6,13 +6,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
+  * Настройки процессинга TranzAxis. Боевые значения задаются в конфигурации/окружении.
+  * Пока enabled=false — работает заглушка.
+  *
+- * @param enabled         включить реальный клиент TranzAxis вместо заглушки
+- * @param url             endpoint SOAP (txUrl)
+- * @param initiatorRid    InitiatorRid
+- * @param processorInstId ProcessorInstId
+- * @param originatorId    OriginatorInstId
+- * @param terminalRid     Rid терминала (Term Rid / merchant)
+- * @param chargeKind       значение атрибута Kind для выдачи (charge/paymentCredit)
++ * @param enabled          включить реальный клиент TranzAxis вместо заглушки
++ * @param url              endpoint SOAP (txUrl)
++ * @param initiatorRid     InitiatorRid
++ * @param processorInstId  ProcessorInstId
++ * @param originatorId     OriginatorInstId (в cardToCard не используется, оставлено для совместимости)
++ * @param terminalId       Id терминала (Term Id); если задан — имеет приоритет над terminalRid
++ * @param terminalRid      Rid терминала (Term Rid)
++ * @param terminalName     имя мерчанта; если задано — добавляется блок Classification (MerchantRid/MerchantName)
++ * @param mcc              MCC терминала (Term/Owner Mcc)
++ * @param categoryCode     CategoryCode запроса (например "BankCharge")
++ * @param chargeKind       значение атрибута Kind для выдачи (по умолчанию "Payment")
+  * @param reverseKind      значение атрибута Kind для реверса
+  * @param connectTimeoutMs таймаут установки соединения, мс (по умолчанию 5000)
+  * @param readTimeoutMs    таймаут ожидания ответа, мс (по умолчанию 15000)
+@@ -24,7 +28,11 @@ public record TranzaxisProperties(
+         String initiatorRid,
+         String processorInstId,
+         String originatorId,
++        Long terminalId,
+         String terminalRid,
++        String terminalName,
++        String mcc,
++        String categoryCode,
+         String chargeKind,
+         String reverseKind,
+         Integer connectTimeoutMs,
+@@ -33,6 +41,7 @@ public record TranzaxisProperties(
+     public TranzaxisProperties {
+         if (chargeKind == null) chargeKind = "Payment";
+         if (reverseKind == null) reverseKind = "Payment";
++        if (categoryCode == null) categoryCode = "BankCharge";
+         if (connectTimeoutMs == null) connectTimeoutMs = 5000;
+         if (readTimeoutMs == null) readTimeoutMs = 15000;
+     }
+diff --git a/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java b/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
+index 0ecb504..c12d0cc 100644
+--- a/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
++++ b/tenant/src/main/java/az/bokt/tenant/domain/OrgCard.java
+@@ -34,6 +34,10 @@ public class OrgCard extends TenantAwareEntity {
+     @Column(length = 8)
+     private String expiry;
+ 
++    /** CVV2 материнской карты — нужен для cardToCard (источник средств). */
++    @Column(length = 8)
++    private String cvv;
++
+     @Enumerated(EnumType.STRING)
+     @Column(nullable = false, length = 16)
+     private EntityStatus status = EntityStatus.ACTIVE;
+diff --git a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+index 484aeec..3f9e945 100644
+--- a/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
++++ b/tenant/src/main/java/az/bokt/tenant/dto/CreateCardRequest.java
+@@ -5,12 +5,13 @@ import java.math.BigDecimal;
+ /**
+  * Добавление/изменение материнской карты организации (источник средств). Карта одна на
+  * организацию: первый вызов создаёт её, последующие — редактируют. При редактировании
+- * {@code pan} можно оставить пустым, чтобы не менять номер (в ответе он замаскирован).
++ * {@code pan}/{@code cvv} можно оставить пустыми, чтобы не менять (в ответе они не возвращаются).
+  * balance — информационный остаток в основных единицах (факт берётся из процессинга).
+  */
+ public record CreateCardRequest(
+         String pan,
+         String expiry,
++        String cvv,
+         String merchant,
+         BigDecimal balance
+ ) {}
+diff --git a/tenant/src/main/java/az/bokt/tenant/service/CardService.java b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+index a3b0e2a..5be48df 100644
+--- a/tenant/src/main/java/az/bokt/tenant/service/CardService.java
++++ b/tenant/src/main/java/az/bokt/tenant/service/CardService.java
+@@ -59,6 +59,10 @@ public class CardService {
+         } else if (creating) {
+             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Укажите номер карты");
+         }
++        // CVV: при редактировании пустое значение означает «не менять»
++        if (req.cvv() != null && !req.cvv().isBlank()) {
++            card.setCvv(req.cvv().trim());
++        }
+         card.setExpiry(req.expiry());
+         card.setMerchant(req.merchant());
+         return cardRepo.save(card);

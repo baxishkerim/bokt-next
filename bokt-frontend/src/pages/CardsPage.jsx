@@ -102,7 +102,7 @@ function AddCardDialog({ card, onClose, onAdded }) {
   const { notify } = useFeedback();
   const editing = Boolean(card);
   const [form, setForm] = useState({
-    pan: '', expiry: card?.expiry || '', merchant: card?.merchant || '', balance: '',
+    pan: '', expiry: card?.expiry || '', cvv: '', merchant: card?.merchant || '', balance: '',
   });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -111,7 +111,8 @@ function AddCardDialog({ card, onClose, onAdded }) {
     setBusy(true);
     try {
       const body = {
-        pan: form.pan.trim() || null, expiry: form.expiry || null, merchant: form.merchant || null,
+        pan: form.pan.trim() || null, expiry: form.expiry || null,
+        cvv: form.cvv.trim() || null, merchant: form.merchant || null,
       };
       if (!editing) body.balance = form.balance ? Number(form.balance) : 0;
       await cardsApi.add(body);
@@ -128,6 +129,8 @@ function AddCardDialog({ card, onClose, onAdded }) {
           <TextField label="Номер карты (PAN)" value={form.pan} onChange={set('pan')}
             helperText={editing ? `Текущая: ${card.maskedPan}. Оставьте пустым, чтобы не менять` : undefined} />
           <TextField label="Срок (MMYY)" value={form.expiry} onChange={set('expiry')} />
+          <TextField label="CVV" value={form.cvv} onChange={set('cvv')}
+            helperText={editing ? 'Оставьте пустым, чтобы не менять' : 'Нужен для выдачи (cardToCard)'} />
           <TextField label="Мерчант / терминал" value={form.merchant} onChange={set('merchant')} />
           {!editing && (
             <TextField label="Остаток (AZN, инфо)" type="number" value={form.balance}

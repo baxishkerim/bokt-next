@@ -28,7 +28,6 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
-import java.util.Date;
 
 /**
  * Реальный клиент процессинга TranzAxis (SOAP/SAAJ). Включается при
@@ -78,44 +77,63 @@ public class TranzaxisProcessingClient implements ProcessingClient {
             SOAPElement request = tran.addChildElement(new QName(TRAN, "Request", "ns2"));
             request.setAttribute("InitiatorRid", props.initiatorRid());
             request.setAttribute("ProcessorInstId", props.processorInstId());
-            request.setAttribute("OriginatorInstId", props.originatorId());
-            request.setAttribute("LocalTime", full.format(new Date()));
             request.setAttribute("Kind", props.chargeKind());
-            request.setAttribute("LifePhase", "Single");
-            request.setAttribute("IsReversal", "false");
-            request.setAttribute("IsPartial", "false");
             request.setAttribute("IsAdvice", "false");
+            request.setAttribute("IsPartial", "false");
+            request.setAttribute("IsReversal", "false");
+            request.setAttribute("LifePhase", "Single");
+
+            // Classification (MerchantRid/MerchantName) — только если задано имя мерчанта
+            if (props.terminalName() != null && !props.terminalName().isBlank()) {
+                SOAPElement classification = request.addChildElement(new QName(TRAN, "Classification", "ns2"));
+                SOAPElement merchantRid = classification.addChildElement(new QName(TRAN, "Classifier", "ns2"));
+                merchantRid.setAttribute("Key", "MerchantRid");
+                merchantRid.addTextNode(props.terminalRid());
+                SOAPElement merchantName = classification.addChildElement(new QName(TRAN, "Classifier", "ns2"));
+                merchantName.setAttribute("Key", "MerchantName");
+                merchantName.addTextNode(props.terminalName());
+            }
+
+            request.setAttribute("Administrative", "false");
+            if (props.categoryCode() != null && !props.categoryCode().isBlank()) {
+                request.setAttribute("CategoryCode", props.categoryCode());
+            }
             request.setAttribute("PreprocessOnly", "false");
-            request.setAttribute("TextMess", "Credit payout");
+            request.setAttribute("TextMess", req.description() == null ? "Credit payout" : req.description());
 
             SOAPElement parties = request.addChildElement(new QName(TRAN, "Parties", "ns2"));
 
-            // Источник — материнская карта организации (доверенная: без CVV и без срока)
+            // Терминал (первым, как в EBWS): Id приоритетнее Rid; Type=Ecom; Owner/Mcc
+            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
+            if (props.terminalId() != null) {
+                term.setAttribute("Id", props.terminalId().toString());
+            } else {
+                term.setAttribute("Rid", props.terminalRid());
+            }
+            term.setAttribute("Type", "Ecom");
+            if (props.mcc() != null && !props.mcc().isBlank()) {
+                SOAPElement owner = term.addChildElement(new QName(TRAN, "Owner", "ns2"));
+                owner.setAttribute("Mcc", props.mcc());
+            }
+
+            // Источник — материнская карта организации (PAN + ExpDate + CVV)
             SOAPElement cust = parties.addChildElement(new QName(TRAN, "Cust", "ns2"));
-            cust.setAttribute("AuthChecked", "true");
-            cust.setAttribute("Presence", "false");
             SOAPElement token = cust.addChildElement(new QName(TRAN, "Token", "ns2"));
             token.setAttribute("Kind", "Card");
             SOAPElement sourceCard = token.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
+            sourceCard.setAttribute("EntryMode", "ECommerce");
+            sourceCard.setAttribute("ExpDate", toExpDate(req.sourceExpiry(), full));
             sourceCard.setAttribute("Pan", req.sourcePan());
+            SOAPElement auth = sourceCard.addChildElement(new QName(TRAN_COMMON, "Auth", "ns4"));
+            auth.setAttribute("Cvv2", req.sourceCvv());
 
-            // Терминал организации
-            SOAPElement term = parties.addChildElement(new QName(TRAN, "Term", "ns2"));
-            term.setAttribute("Rid", props.terminalRid());
-
-            // Получатель — карта клиента (PAN + срок в ExpDate)
+            // Получатель — карта клиента (только PAN)
             SOAPElement payee = parties.addChildElement(new QName(TRAN, "Payee", "ns2"));
             payee.setAttribute("Type", "CustToken");
             SOAPElement payeeCard = payee.addChildElement(new QName(TRAN_COMMON, "Card", "ns4"));
             payeeCard.setAttribute("Pan", req.payeePan());
-            if (req.payeeExpiry() != null && !req.payeeExpiry().isBlank()) {
-                payeeCard.setAttribute("ExpDate", toExpDate(req.payeeExpiry(), full));
-            }
 
-            SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
-            match.setAttribute("Key", req.guid());
-            match.setAttribute("CheckForDuplicate", "true");
-
+            // Деньги
             SOAPElement moneys = request.addChildElement(new QName(TRAN, "Moneys", "ns2"));
             SOAPElement mCust = moneys.addChildElement(new QName(TRAN, "Cust", "ns2"));
             mCust.setAttribute("Ccy", req.currencyCode());
@@ -123,6 +141,11 @@ public class TranzaxisProcessingClient implements ProcessingClient {
             SOAPElement mClear = moneys.addChildElement(new QName(TRAN, "Clear", "ns2"));
             mClear.setAttribute("Ccy", req.currencyCode());
             mClear.setAttribute("Amt", amount);
+
+            // Идемпотентность
+            SOAPElement match = request.addChildElement(new QName(TRAN, "Match", "ns2"));
+            match.setAttribute("CheckForDuplicate", "true");
+            match.setAttribute("Key", req.guid());
 
             String response = send(msg, "CHARGE", req.guid());
             return readTranResult(response);
